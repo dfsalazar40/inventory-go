@@ -1,0 +1,29 @@
+# Challenge brief (contains company name — must NOT be published, see NOTE 1)
+*.pdf
+
+# Agent tooling (local only)
+.atl/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Go
+/backend/bin/
+/backend/tmp/
+*.test
+*.out
+coverage.out
+
+# Node / Vite
+node_modules/
+/frontend/dist/
+/frontend/.vite/
+*.local
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
