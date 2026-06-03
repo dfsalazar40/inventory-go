@@ -31,7 +31,11 @@
 
 ## Notes
 
-- Two assumptions are explicitly flagged for `/speckit-clarify`: (1) whether a "confirm" step exists
-  given the brief's "if not confirmed" wording, and (2) whether the reserve idempotency key is
-  required vs. server-generated. These do not block planning but will be resolved before `/speckit-plan`.
-- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`. None remain.
+- `/speckit-clarify` session 2026-06-03 resolved all open assumptions:
+  1. **Confirm step** — RESOLVED: two-phase model (PENDING hold → CONFIRMED via a Confirm action;
+     Release returns the unit). Added as User Story 8 and FR-016.
+  2. **Reserve idempotency key** — RESOLVED: frontend-generated, sent in the header, required (400 if
+     missing); backend validates/dedupes (FR-009).
+  3. **User identity** — RESOLVED: browser-generated UUID with ~1-day client TTL, no auth (FR-018).
+  4. **TTL reset on add** — RESOLVED: configurable `RESET_TTL_ON_ADD`, default enabled (FR-017).
+- No flagged assumptions remain. Spec is ready for `/speckit-plan`.

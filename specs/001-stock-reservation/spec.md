@@ -11,14 +11,28 @@ Users hold items for a limited window (60s TTL). Prevent over-reservation under 
 load. Support atomic reservations, manual release, idempotent reserve/release, conflict handling,
 a live inventory dashboard, and a per-user view of active reservations."
 
+## Clarifications
+
+### Session 2026-06-03
+
+- Q: Do reservations have a "confirm" step, or are they only temporary holds ended by release/expiration? → A: **Two-phase model.** "Reserve Item" creates a temporary **PENDING** hold (a pre-reservation); a **Confirm** action finalizes it into a **CONFIRMED** reservation that no longer expires. **Release** returns the unit to available stock. (Authoritative client clarification: the mockup's "release" returns the item; a "Confirm" control was missing and belongs above each pending line.)
+- Q: Can a user reserve multiple units of the same product? → A: **Yes.** Each "Reserve Item" click adds one unit as a separate pending hold to the user's to-confirm list; pending holds are confirmed one at a time.
+- Q: Is the reserve Idempotency-Key client- or server-generated? → A: **Generated on the frontend** (one fresh key per "Reserve Item" action) and sent in the request header; the **backend validates and manages it** (dedup of retries + key/payload conflict detection). The header is **required** (400 if missing), since the frontend always generates it.
+- Q: How is the user identified? → A: A **browser-generated UUID with a 1-day TTL**; no authentication or server-side session handling is in scope. The "my reservations" view is scoped to that UUID.
+- Q: Should the pending-reservation TTL countdown reset when a new item is added? → A: **Yes**, the countdown resets on each add. This is a **configurable** behavior via a `RESET_TTL_ON_ADD` flag: enabled = reset the pending window on each add; disabled = each pending hold keeps its original `creation + TTL` expiration.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Reserve stock without ever over-selling (Priority: P1)
 
-A shopper sees an item with available stock and reserves N units. The reservation succeeds only
-if at least N units are actually available at that instant; otherwise it is cleanly rejected.
-Under a flash-sale stampede, the total number of successful reservations for an item can never
-exceed its total stock — no double-sell, ever.
+A shopper sees an item with available stock and reserves N units. A successful reserve creates a
+**PENDING** hold (a pre-reservation) that decrements available stock immediately and must later be
+confirmed (US8) or it expires (US3). The reservation succeeds only if at least N units are actually
+available at that instant; otherwise it is cleanly rejected. The UI issues one unit per "Reserve
+Item" click, so a user may accumulate several pending holds on the same item; the API also accepts a
+quantity N in a single request (used by the concurrency tests). Under a flash-sale stampede, the
+total number of active (pending + confirmed) reserved units for an item can never exceed its total
+stock — no double-sell, ever.
 
 **Why this priority**: This is the core promise of the system. Everything else is secondary to
 the guarantee that stock is never over-reserved. Without it, the product has no reason to exist.
@@ -68,11 +82,13 @@ the first client's available count decreases within a bounded time without a man
 
 ---
 
-### User Story 3 - Reservations expire automatically after 60 seconds (Priority: P2)
+### User Story 3 - Pending reservations expire automatically after 60 seconds (Priority: P2)
 
-When a user reserves units but does not act on them, the reservation automatically expires 60
-seconds after creation. On expiration it is permanently removed, can no longer be interacted with,
-and its units return to the available pool exactly once.
+When a user creates a pending hold but does not confirm or release it, the **pending** reservation
+automatically expires 60 seconds after creation (or after its last reset window — see the
+`RESET_TTL_ON_ADD` clarification). On expiration it is permanently removed, can no longer be
+interacted with, and its units return to the available pool exactly once. **Confirmed reservations
+do not expire** — confirming a hold stops its TTL and locks the units.
 
 **Why this priority**: TTL is what keeps stock liquid during a flash sale; abandoned holds must
 not lock inventory forever. It depends on US1 existing first.
@@ -186,6 +202,35 @@ assert a distinct, user-readable message and a recovered (non-blocked) UI.
 
 ---
 
+### User Story 8 - Confirm a pending reservation into a final hold (Priority: P1)
+
+A user reviews their pending holds and confirms them one at a time. Confirming transitions a
+reservation from **PENDING** to **CONFIRMED**: the units stay held (no stock change), the TTL stops,
+and the reservation can no longer expire. The Confirm control sits above the Release control on each
+pending line. Confirming is the second phase of the two-phase reserve model.
+
+**Why this priority**: Confirmation is the action that turns a temporary hold into a committed
+reservation — it is half of the core reserve flow the client explicitly requires, not an optional
+extra.
+
+**Independent Test**: Create a pending hold, confirm it, wait past the TTL, and assert the
+reservation is still present as CONFIRMED, its units remain held, and it never expired.
+
+**Acceptance Scenarios**:
+
+1. **Given** a pending reservation, **When** the user confirms it, **Then** its status becomes
+   CONFIRMED, its units remain held (available count unchanged by the confirm), and its countdown
+   stops.
+2. **Given** a confirmed reservation, **When** 60+ seconds elapse, **Then** it does NOT expire and
+   its units stay held.
+3. **Given** a pending reservation that has already expired or been released, **When** the user tries
+   to confirm it, **Then** the confirm is rejected with a clear "not found / no longer pending"
+   result and no stock changes.
+4. **Given** an already-confirmed reservation, **When** confirm is sent again with the same
+   idempotency key, **Then** it is a safe no-op returning the same confirmed reservation.
+
+---
+
 ### Edge Cases
 
 - **Last-unit stampede**: 50+ concurrent requests for a single remaining unit → exactly one wins;
@@ -206,7 +251,17 @@ assert a distinct, user-readable message and a recovered (non-blocked) UI.
   change.
 - **Realtime channel drops** → the client reconnects and reconciles to the true backend state
   (it must not display stale stock indefinitely).
-- **Missing idempotency key on reserve** → see Assumptions for the chosen default behavior.
+- **Missing idempotency key on reserve** → rejected with a `400` validation error; no hold created.
+- **Confirm after expiration/release** → rejected with a clear "not found / no longer pending"
+  result; no stock change (the units were already returned by the expiration/release).
+- **Confirm an already-confirmed reservation (same idempotency key)** → safe no-op returning the
+  same confirmed reservation; no double effect.
+- **Confirm-vs-expire race**: the TTL sweep and a manual confirm fire at the same instant for the
+  same pending reservation → exactly one outcome wins atomically (either it confirms and is kept, or
+  it expires and returns stock once) — never both.
+- **TTL reset on add**: with `RESET_TTL_ON_ADD` enabled, adding a new pending hold refreshes the
+  pending-window countdown; with it disabled, each pending hold keeps its original `creation + TTL`
+  expiration. The configured behavior MUST be consistent between the backend sweep and the UI clock.
 
 ## Requirements *(mandatory)*
 
@@ -215,20 +270,27 @@ assert a distinct, user-readable message and a recovered (non-blocked) UI.
 - **FR-001**: System MUST display each item with name, total stock, reserved count, and available
   count, where available = total − reserved and is never negative.
 - **FR-002**: Users MUST be able to reserve N units of an item, succeeding only if at least N units
-  are available at the moment of reservation.
+  are available at the moment of reservation. A successful reserve creates a **PENDING** hold (a
+  pre-reservation) and decrements available immediately. The UI issues one unit per "Reserve Item"
+  click, so a user MAY hold multiple pending reservations; the API also accepts a quantity N per
+  request.
 - **FR-003**: System MUST guarantee that, under arbitrary concurrent load, the sum of active
   reserved units for an item never exceeds its total stock (zero over-sell).
 - **FR-004**: System MUST reject reserve requests that exceed available stock or use an invalid
   quantity, with a clear, typed error and no state change.
-- **FR-005**: System MUST expire any reservation 60 seconds after its creation if it has not been
-  released, permanently removing it and returning its units to available exactly once.
+- **FR-005**: System MUST expire any **PENDING** reservation 60 seconds after its creation (or after
+  its last reset window, per FR-017) if it has not been confirmed or released, permanently removing
+  it and returning its units to available exactly once. **CONFIRMED reservations MUST NOT expire.**
 - **FR-006**: System MUST prevent any interaction with an expired reservation.
 - **FR-007**: Users MUST be able to manually release a reservation at any time, including after its
   TTL has elapsed, returning its units to available exactly once.
 - **FR-008**: Release MUST be idempotent: repeated releases of the same reservation succeed as a
   well-defined no-op and never return stock more than once.
-- **FR-009**: Reserve MUST be idempotent via a client-supplied idempotency key: identical key +
-  payload returns the same reservation with a single stock decrement.
+- **FR-009**: Reserve MUST be idempotent via a **frontend-generated** idempotency key sent in the
+  request header (one fresh key per "Reserve Item" action): identical key + payload returns the same
+  reservation with a single stock decrement. The key is **required**; a missing key MUST be rejected
+  with a `400` error. The backend is responsible for validating, deduplicating, and detecting
+  conflicts on the key.
 - **FR-010**: System MUST reject a reserve that reuses an idempotency key with a different payload,
   with a clear conflict error.
 - **FR-011**: System MUST keep all clients' views of stock and reservations synchronized with the
@@ -242,21 +304,37 @@ assert a distinct, user-readable message and a recovered (non-blocked) UI.
   request/response shapes, the idempotency-key mechanism, and error formats.
 - **FR-015**: System MUST be reproducibly runnable as a whole (database, backend, frontend) and ship
   with seed inventory data for review.
+- **FR-016**: Users MUST be able to **confirm** a pending reservation, transitioning it from PENDING
+  to CONFIRMED. Confirming MUST keep the units held (no stock change), stop its TTL, and make the
+  reservation non-expiring. Confirm MUST be idempotent (repeating it for an already-confirmed
+  reservation is a safe no-op) and MUST be rejected with a clear typed result if the reservation is
+  no longer pending (expired/released/not found).
+- **FR-017**: System MUST support a configurable `RESET_TTL_ON_ADD` behavior: when enabled, adding a
+  new pending reservation resets the pending-window countdown; when disabled, each pending hold keeps
+  its original `creation + TTL` expiration. The chosen setting MUST be applied consistently by the
+  backend expiration sweep and surfaced to the frontend countdown, and MUST be documented.
+- **FR-018**: System MUST identify a user by a **browser-generated UUID persisted for ~1 day**
+  (client-side TTL); no authentication or server-side session is in scope. The "my reservations"
+  view MUST be scoped to that UUID.
 
 ### Key Entities *(include if feature involves data)*
 
 - **Item**: A product available for reservation. Attributes: stable identifier, display name, total
   stock (fixed capacity), reserved count (sum of active reservations). Available is derived as
   total − reserved.
-- **Reservation**: A time-bounded hold by one user on N units of one item. Attributes: identifier,
-  the item, the holding user, quantity, status (active / released / expired), creation time,
-  expiration time (creation + 60s). A reservation in a terminal state (released or expired) cannot
-  be interacted with.
+- **Reservation**: A hold by one user on N units of one item. Attributes: identifier, the item, the
+  holding user, quantity, status, creation time, expiration time (creation + 60s, only meaningful
+  while PENDING). Lifecycle: **PENDING** (pre-reservation, TTL ticking, decrements available) →
+  **CONFIRMED** (finalized, units stay held, no longer expires) OR **RELEASED** (returned by the
+  user) OR **EXPIRED** (TTL elapsed without confirm/release). CONFIRMED, RELEASED, and EXPIRED are
+  terminal for expiration/release/confirm interactions; RELEASED and EXPIRED return the units to
+  available exactly once.
 - **Idempotency Record**: Links a client-supplied idempotency key to the reservation it produced and
   the payload it was created with, so retries return the same outcome and conflicting reuse is
   detected.
-- **User**: The actor holding reservations, identified by a client-supplied identifier (no
-  authentication system in scope — see Assumptions).
+- **User**: The actor holding reservations, identified by a **browser-generated UUID persisted for
+  ~1 day** (client-side TTL); no authentication or server-side session in scope. The "my
+  reservations" view is scoped to that UUID.
 
 ## Success Criteria *(mandatory)*
 
@@ -275,6 +353,12 @@ assert a distinct, user-readable message and a recovered (non-blocked) UI.
   elapses.
 - **SC-007**: Each failure mode (conflict, insufficient stock, invalid quantity) produces a distinct,
   user-readable message, and the UI remains usable (no blocked or crashed state) after the error.
+- **SC-008**: A confirmed reservation still exists with its units held after 60+ seconds elapse (it
+  does not expire), and confirming the same reservation twice (same idempotency key) yields exactly
+  one confirmed reservation with no extra stock effect.
+- **SC-009**: With `RESET_TTL_ON_ADD` enabled, adding a new pending hold extends the pending-window
+  expiration to a fresh TTL; with it disabled, each pending hold expires at its own `creation + TTL`.
+  Backend sweep and UI countdown agree on the configured behavior.
 
 ## Assumptions
 
@@ -282,14 +366,21 @@ assert a distinct, user-readable message and a recovered (non-blocked) UI.
   workflow-ordered commits, instead of a per-feature branch. Rationale: the evaluation inspects Git
   history for architecture-first ordering, and a linear history tells that story most clearly. (This
   is a documented deviation from Spec Kit's default per-feature-branch flow.)
-- **User identity**: A user is identified by a client-generated identifier (persisted in the browser);
-  no login/auth system is in scope. The "my reservations" view is scoped to that identifier.
-- **"Confirmed" reservations**: The brief mentions reservations expire "if not confirmed," but no
-  confirm/checkout step is defined in the API or UI reference. We assume confirmation (converting a
-  hold into a purchase) is OUT OF SCOPE for this challenge; reservations are temporary holds that end
-  by manual release or 60-second expiration. Flagged for `/speckit-clarify`.
-- **Idempotency key on reserve**: Treated as required for reserve; a missing key results in a clear
-  client error. (Alternative — auto-generating one server-side — is considered in `/clarify`.)
+- **User identity**: A user is identified by a browser-generated UUID persisted client-side for ~1
+  day (client TTL); no login/auth or server-side session is in scope. The "my reservations" view is
+  scoped to that UUID. (Resolved in `/clarify` 2026-06-03.)
+- **Two-phase reservation model**: Clarified with the client (2026-06-03) — a "Reserve Item" click
+  creates a temporary PENDING hold, and a separate **Confirm** action finalizes it into a CONFIRMED
+  reservation that no longer expires. "Release" returns the unit. This **supersedes** the earlier
+  assumption that confirmation was out of scope. A user may hold multiple pending units and confirms
+  them one at a time.
+- **Idempotency key on reserve**: Frontend-generated (one fresh key per "Reserve Item" action), sent
+  in the request header, **required** — a missing key returns `400`. The backend validates,
+  deduplicates, and detects key/payload conflicts. (Resolved in `/clarify` 2026-06-03.)
+- **TTL reset on add**: The `RESET_TTL_ON_ADD` behavior **defaults to enabled** (adding a pending
+  hold resets the pending-window countdown), and is configurable to disabled (each hold keeps its
+  own `creation + TTL`). Documented as a configurable non-functional behavior. (Resolved in
+  `/clarify` 2026-06-03.)
 - **Reservation history retention**: Expired/released reservations may be hard-removed (the brief
   says expiration "permanently removes" them); no audit-history requirement is assumed.
 - **Seed data**: A small catalog mirroring the visual reference (e.g., Vintage Camera, Mechanical
