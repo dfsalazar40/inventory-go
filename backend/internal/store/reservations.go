@@ -23,6 +23,9 @@ type ReserveParams struct {
 	// TTL is the duration a PENDING hold lives before expiring.
 	// Defaults to 60 seconds if zero.
 	TTL time.Duration
+	// IdempotencyKey is the frontend-generated key (Idempotency-Key header).
+	// Required: Reserve returns ErrIdempotencyKeyRequired when empty.
+	IdempotencyKey string
 }
 
 // ttl returns the effective TTL for a reserve operation.
@@ -37,6 +40,7 @@ func (p ReserveParams) ttl() time.Duration {
 // Declare it here so both the handler and test stubs can reference it.
 type ReservationStorer interface {
 	Reserve(ctx context.Context, p ReserveParams) (*domain.Reservation, error)
+	Confirm(ctx context.Context, reservationID string) (*domain.Reservation, error)
 }
 
 // ReservationStore is the concrete Postgres-backed implementation.
@@ -54,13 +58,29 @@ func NewReservationStore(pool *pgxpool.Pool) *ReservationStore {
 // transaction containing one atomic conditional UPDATE on items followed by one
 // INSERT into reservations.
 //
+// Idempotency (FR-009/FR-010, research §4): p.IdempotencyKey is required.
+// Inside the transaction, after inserting the reservation, we attempt
+// INSERT INTO idempotency_keys ON CONFLICT DO NOTHING. If the key already
+// existed:
+//   - same request_hash → safe replay: return the existing reservation, no
+//     stock change, no new insert (rollback this tx).
+//   - different hash → 409: roll back and return ErrIdempotencyKeyConflict.
+//
 // The UPDATE predicate `total_stock - reserved >= qty` is the sole correctness
 // gate. Postgres evaluates it atomically under row-level locking: two concurrent
 // requests for the last unit serialize on the row and exactly one sees the
 // predicate satisfied. No read-then-write, no application locks.
 //
 // Returns domain.ErrInsufficientStock when 0 rows are affected (no stock).
+// Returns domain.ErrIdempotencyKeyRequired when IdempotencyKey is empty.
 func (s *ReservationStore) Reserve(ctx context.Context, p ReserveParams) (*domain.Reservation, error) {
+	// Enforce required idempotency key before opening a transaction.
+	if p.IdempotencyKey == "" {
+		return nil, domain.ErrIdempotencyKeyRequired
+	}
+
+	requestHash := hashPayload(p.ItemID, p.Quantity)
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin transaction: %w", err)
@@ -114,11 +134,87 @@ func (s *ReservationStore) Reserve(ctx context.Context, p ReserveParams) (*domai
 		return nil, fmt.Errorf("insert reservation: %w", err)
 	}
 
+	// Step 3: idempotency key registration — inside the same transaction.
+	// ON CONFLICT (key) DO NOTHING: if this key is new, 1 row inserted (first
+	// call). If already present, 0 rows (duplicate). The result determines
+	// whether we commit a new reservation or return the existing one.
+	idem, err := checkOrRegisterIdempotencyKey(ctx, tx, p.IdempotencyKey, requestHash, r.ID)
+	if err != nil {
+		// err is ErrIdempotencyKeyConflict (different payload) — roll back.
+		return nil, err
+	}
+
+	if idem.existing != nil {
+		// Safe replay: key already existed with the same payload hash.
+		// Roll back this transaction (the stock UPDATE and reservation INSERT
+		// are undone) and return the previously created reservation.
+		tx.Rollback(ctx) //nolint:errcheck
+		return idem.existing, nil
+	}
+
+	// idem.existing == nil → first call; commit everything.
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit transaction: %w", err)
 	}
 
 	return r, nil
+}
+
+// Confirm transitions a reservation from PENDING to CONFIRMED.
+//
+// Design (data-model.md, research §2):
+//   - Conditional UPDATE WHERE status='pending' → exactly-once guarantee.
+//   - 0 rows affected → re-read the row:
+//     * already confirmed → safe no-op (return the row, no error).
+//     * released/expired  → ErrNotPending.
+//     * absent            → ErrNotFound.
+//   - No stock change: confirmed units stay in items.reserved.
+//   - expires_at is set to NULL; confirmed_at is set to now().
+func (s *ReservationStore) Confirm(ctx context.Context, reservationID string) (*domain.Reservation, error) {
+	const updateSQL = `
+		UPDATE reservations
+		   SET status = 'confirmed',
+		       confirmed_at = now(),
+		       expires_at = NULL
+		 WHERE id = $1
+		   AND status = 'pending'
+		RETURNING id, item_id, user_id, quantity, status, created_at, expires_at,
+		          confirmed_at, released_at`
+
+	row := s.pool.QueryRow(ctx, updateSQL, reservationID)
+	r, err := scanReservation(row)
+	if err == nil {
+		// Transition succeeded — return the confirmed reservation.
+		return r, nil
+	}
+	if err != pgx.ErrNoRows {
+		return nil, fmt.Errorf("confirm UPDATE: %w", err)
+	}
+
+	// 0 rows — re-read to distinguish no-op (already confirmed) from errors.
+	const selectSQL = `
+		SELECT id, item_id, user_id, quantity, status, created_at, expires_at,
+		       confirmed_at, released_at
+		  FROM reservations
+		 WHERE id = $1`
+
+	row2 := s.pool.QueryRow(ctx, selectSQL, reservationID)
+	existing, readErr := scanReservation(row2)
+	if readErr != nil {
+		if readErr == pgx.ErrNoRows {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("confirm re-read: %w", readErr)
+	}
+
+	switch existing.Status {
+	case domain.StatusConfirmed:
+		// Already confirmed — idempotent no-op.
+		return existing, nil
+	default:
+		// released or expired — cannot confirm.
+		return nil, domain.ErrNotPending
+	}
 }
 
 // scanReservation scans a single reservation row from a pgx.Row.

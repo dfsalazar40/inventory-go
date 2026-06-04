@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/dfsalazar40/inventory-go/backend/internal/domain"
 	"github.com/dfsalazar40/inventory-go/backend/internal/store"
 )
@@ -20,6 +22,7 @@ type ReserveParams = store.ReserveParams
 // Satisfied by *store.ReservationStore (and by in-test stubs).
 type ReservationStorer interface {
 	Reserve(ctx context.Context, p ReserveParams) (*domain.Reservation, error)
+	Confirm(ctx context.Context, reservationID string) (*domain.Reservation, error)
 }
 
 // ReservationHandler handles HTTP requests for the /reservations resource.
@@ -56,16 +59,25 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 // Reserve handles POST /reservations.
 //
 // Validation:
+//   - Idempotency-Key header must be present and non-empty (FR-009).
 //   - itemId must be present and non-empty.
 //   - quantity must be an integer >= 1 (non-integer body → 400 at JSON decode).
 //
 // On success: 201 with the Reservation JSON.
+// On replay (same key + same payload): 201 with the original Reservation JSON.
+// On idempotency key conflict (same key + different payload): 409.
+// On missing Idempotency-Key header: 400.
 // On insufficient stock / conflict: 409.
 // On validation error: 400.
-//
-// Idempotency-Key enforcement is deferred to a later batch (US6). The header
-// may be present but is not required here.
 func (h *ReservationHandler) Reserve(w http.ResponseWriter, r *http.Request) {
+	// FR-009: Idempotency-Key is required.
+	idemKey := r.Header.Get("Idempotency-Key")
+	if idemKey == "" {
+		writeError(w, http.StatusBadRequest, "idempotency_key_required",
+			"Idempotency-Key header is required")
+		return
+	}
+
 	// Decode body. A non-integer quantity field fails here → 400.
 	var req createReservationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -89,17 +101,24 @@ func (h *ReservationHandler) Reserve(w http.ResponseWriter, r *http.Request) {
 	// Extract userId from the enforced middleware header.
 	userID := r.Header.Get("X-User-Id")
 
-	// Call the store.
+	// Call the store with the idempotency key.
 	params := ReserveParams{
-		ItemID:   req.ItemID,
-		UserID:   userID,
-		Quantity: *req.Quantity,
-		TTL:      h.ttl,
+		ItemID:         req.ItemID,
+		UserID:         userID,
+		Quantity:       *req.Quantity,
+		TTL:            h.ttl,
+		IdempotencyKey: idemKey,
 	}
 
 	reservation, err := h.store.Reserve(r.Context(), params)
 	if err != nil {
 		switch {
+		case errors.Is(err, domain.ErrIdempotencyKeyRequired):
+			writeError(w, http.StatusBadRequest, "idempotency_key_required",
+				"Idempotency-Key header is required")
+		case errors.Is(err, domain.ErrIdempotencyKeyConflict):
+			writeError(w, http.StatusConflict, "idempotency_key_conflict",
+				"Idempotency-Key was already used with a different request payload")
 		case errors.Is(err, domain.ErrInsufficientStock):
 			writeError(w, http.StatusConflict, "insufficient_stock",
 				"not enough stock available for the requested quantity")
@@ -117,5 +136,43 @@ func (h *ReservationHandler) Reserve(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(reservation) //nolint:errcheck
+}
+
+// ConfirmReservation handles POST /reservations/{id}/confirm.
+//
+// Idempotency is BY RESERVATION STATE (FR-016, data-model.md):
+//   - Pending → confirmed: 200 with the confirmed reservation.
+//   - Already confirmed: 200 no-op (same reservation returned).
+//   - Released or expired: 409 not_pending.
+//   - Not found: 404 not_found.
+//
+// No Idempotency-Key header is required or accepted on this endpoint.
+// No stock change occurs on confirm.
+func (h *ReservationHandler) ConfirmReservation(w http.ResponseWriter, r *http.Request) {
+	reservationID := chi.URLParam(r, "id")
+	if reservationID == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "reservation id is required")
+		return
+	}
+
+	reservation, err := h.store.Confirm(r.Context(), reservationID)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrNotFound):
+			writeError(w, http.StatusNotFound, "not_found",
+				"reservation not found")
+		case errors.Is(err, domain.ErrNotPending):
+			writeError(w, http.StatusConflict, "not_pending",
+				"reservation is no longer pending and cannot be confirmed")
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error",
+				"an unexpected error occurred")
+		}
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(reservation) //nolint:errcheck
 }

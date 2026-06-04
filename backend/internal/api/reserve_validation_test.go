@@ -23,6 +23,10 @@ func (s *stubReservationStore) Reserve(_ context.Context, _ ReserveParams) (*dom
 	return nil, nil
 }
 
+func (s *stubReservationStore) Confirm(_ context.Context, _ string) (*domain.Reservation, error) {
+	return nil, nil
+}
+
 // newReserveHandler builds the POST /reservations handler under test.
 func newReserveHandler(store ReservationStorer) http.HandlerFunc {
 	h := &ReservationHandler{store: store}
@@ -88,6 +92,7 @@ func TestReserve_Validation(t *testing.T) {
 				strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-User-Id", "test-user")
+			req.Header.Set("Idempotency-Key", "test-idempotency-key")
 
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, req)

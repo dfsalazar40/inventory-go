@@ -22,6 +22,7 @@ func NewRouter(reservations *ReservationHandler) *chi.Mux {
 	// Mount reservation routes when available.
 	if reservations != nil {
 		r.Post("/reservations", reservations.Reserve)
+		r.Post("/reservations/{id}/confirm", reservations.ConfirmReservation)
 	}
 
 	return r

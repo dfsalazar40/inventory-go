@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -46,9 +47,10 @@ func TestReserve_Oversell(t *testing.T) {
 
 			ctx := context.Background()
 			_, err := store.Reserve(ctx, ReserveParams{
-				ItemID:   itemID,
-				UserID:   "user-oversell",
-				Quantity: qty,
+				ItemID:         itemID,
+				UserID:         "user-oversell",
+				Quantity:       qty,
+				IdempotencyKey: fmt.Sprintf("oversell-key-%d", idx),
 			})
 			results[idx] = result{err: err}
 		}(i)
