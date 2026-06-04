@@ -31,12 +31,12 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 
 **Purpose**: Project initialization and reproducible tooling.
 
-- [ ] T001 Create the monorepo layout (`backend/`, `frontend/`) per plan.md Project Structure
-- [ ] T002 [P] Initialize Go module with chi, pgx/v5, gorilla/websocket, golang-migrate in `backend/go.mod`
-- [ ] T003 [P] Scaffold React 19 + Vite 6 + TypeScript app with Vitest + React Testing Library in `frontend/package.json`
-- [ ] T004 [P] Author `docker-compose.yml` (db + backend + frontend, single-command, seeded) at repo root
-- [ ] T005 [P] Add `backend/Dockerfile` and `frontend/Dockerfile`
-- [ ] T006 [P] Configure linting/formatting: `backend/.golangci.yml` and `frontend/.eslintrc` + Prettier
+- [X] T001 Create the monorepo layout (`backend/`, `frontend/`) per plan.md Project Structure
+- [X] T002 [P] Initialize Go module with chi, pgx/v5, gorilla/websocket, golang-migrate in `backend/go.mod`
+- [X] T003 [P] Scaffold React 19 + Vite 6 + TypeScript app with Vitest + React Testing Library in `frontend/package.json`
+- [X] T004 [P] Author `docker-compose.yml` (db + backend + frontend, single-command, seeded) at repo root
+- [X] T005 [P] Add `backend/Dockerfile` and `frontend/Dockerfile`
+- [X] T006 [P] Configure linting/formatting: `backend/.golangci.yml` and `frontend/.eslintrc` + Prettier
 
 ---
 
@@ -46,14 +46,14 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 
 **⚠️ CRITICAL**: No user story work begins until this phase is complete.
 
-- [ ] T007 Write SQL migrations for `items`, `reservations`, `idempotency_keys` (constraints + indexes per data-model.md) in `backend/migrations/`
-- [ ] T008 [P] Create seed data (catalog incl. one out-of-stock item) in `backend/seed/seed.sql`
-- [ ] T009 [P] Implement config loader (`DATABASE_URL`, `RESERVATION_TTL`, `RESET_TTL_ON_ADD`) in `backend/internal/config/config.go`
-- [ ] T010 [P] Define domain entities (`Item`, `Reservation`), `ReservationStatus` enum, and typed errors in `backend/internal/domain/`
-- [ ] T011 Wire pgx pool + migration runner + graceful shutdown skeleton in `backend/cmd/server/main.go`
-- [ ] T012 Set up chi router with recovery/logging middleware and the `X-User-Id` middleware in `backend/internal/api/router.go`
-- [ ] T013 [P] Frontend: `userId` lib (browser UUID, ~1-day TTL) and idempotency-key generator in `frontend/src/lib/identity.ts`
-- [ ] T014 [P] Frontend: base REST client (auto-sends `X-User-Id` and `Idempotency-Key`) in `frontend/src/api/client.ts`
+- [X] T007 Write SQL migrations for `items`, `reservations`, `idempotency_keys` (constraints + indexes per data-model.md) in `backend/migrations/`
+- [X] T008 [P] Create seed data (catalog incl. one out-of-stock item) in `backend/seed/seed.sql`
+- [X] T009 [P] Implement config loader (`DATABASE_URL`, `RESERVATION_TTL`, `RESET_TTL_ON_ADD`) in `backend/internal/config/config.go`
+- [X] T010 [P] Define domain entities (`Item`, `Reservation`), `ReservationStatus` enum, and typed errors in `backend/internal/domain/`
+- [X] T011 Wire pgx pool + migration runner + graceful shutdown skeleton in `backend/cmd/server/main.go`
+- [X] T012 Set up chi router with recovery/logging middleware and the `X-User-Id` middleware in `backend/internal/api/router.go`
+- [X] T013 [P] Frontend: `userId` lib (browser UUID, ~1-day TTL) and idempotency-key generator in `frontend/src/lib/identity.ts`
+- [X] T014 [P] Frontend: base REST client (auto-sends `X-User-Id` and `Idempotency-Key`) in `frontend/src/api/client.ts`
 
 **Checkpoint**: Foundation ready — user stories can begin.
 
