@@ -128,15 +128,15 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 
 ### Tests for User Story 2 (write first, must FAIL) ⚠️
 
-- [ ] T028 [P] [US2] Backend test: `GET /items` returns derived available; a mutation publishes a broadcast event, in `backend/internal/api/items_test.go`
+- [X] T028 [P] [US2] Backend test: `GET /items` returns derived available; a mutation publishes a broadcast event, in `backend/internal/api/items_test.go`
 
 ### Implementation for User Story 2
 
-- [ ] T029 [US2] Implement `GET /items` handler + store query (available = total − reserved) in `backend/internal/api/items.go`
-- [ ] T030 [US2] Implement the WebSocket hub (register/unregister/broadcast) in `backend/internal/realtime/hub.go`
-- [ ] T031 [US2] Publish stock/reservation events from reserve & confirm paths; mount `/ws` and wire the hub in `backend/cmd/server/main.go`
-- [ ] T032 [P] [US2] Frontend `useWebSocket` hook, **test-first**: write `frontend/src/hooks/useWebSocket.test.ts` asserting reconnect-with-backoff and snapshot-on-connect reconcile (simulate a dropped channel → client refetches the REST snapshot and reconciles to backend truth), make it FAIL, then implement connect/reconnect/reconcile in `frontend/src/hooks/useWebSocket.ts`
-- [ ] T033 [US2] Frontend: `InventoryDashboard` + `ItemCard` (live available, "Out of Stock") in `frontend/src/components/`
+- [X] T029 [US2] Implement `GET /items` handler + store query (available = total − reserved) in `backend/internal/api/items.go`
+- [X] T030 [US2] Implement the WebSocket hub (register/unregister/broadcast) in `backend/internal/realtime/hub.go`
+- [X] T031 [US2] Publish stock/reservation events from reserve & confirm paths; mount `/ws` and wire the hub in `backend/cmd/server/main.go`
+- [X] T032 [P] [US2] Frontend `useWebSocket` hook, **test-first**: write `frontend/src/hooks/useWebSocket.test.ts` asserting reconnect-with-backoff and snapshot-on-connect reconcile (simulate a dropped channel → client refetches the REST snapshot and reconciles to backend truth), make it FAIL, then implement connect/reconnect/reconcile in `frontend/src/hooks/useWebSocket.ts`
+- [X] T033 [US2] Frontend: `InventoryDashboard` + `ItemCard` (live available, "Out of Stock") in `frontend/src/components/`
 
 **Checkpoint**: Live, synced inventory is visible and reactive.
 
