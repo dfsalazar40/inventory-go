@@ -17,7 +17,7 @@ One command. Brings up Postgres 16, the Go backend, and the React frontend — s
 
 | Service    | URL                          | Notes                                    |
 |------------|------------------------------|------------------------------------------|
-| Frontend   | http://localhost:3000        | React dashboard                          |
+| Frontend   | http://localhost:5173        | React dashboard (nginx in Docker)        |
 | Backend    | http://localhost:8080        | REST API + WebSocket at `/ws`            |
 | OpenAPI    | http://localhost:8080/openapi.yaml | Full contract                      |
 | Database   | localhost:5432               | PostgreSQL 16, migrations + seed applied |
