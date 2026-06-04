@@ -5,11 +5,13 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/dfsalazar40/inventory-go/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -81,6 +83,15 @@ func (s *ReservationStore) Reserve(ctx context.Context, p ReserveParams) (*domai
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			// 0 rows affected: predicate not satisfied — insufficient stock.
+			return nil, domain.ErrInsufficientStock
+		}
+		// Defense-in-depth: if the DB CHECK constraint (reserved <= total_stock,
+		// SQLSTATE 23514) fires due to a logic bug, classify it as insufficient
+		// stock rather than leaking a 500. This should never trigger in normal
+		// operation — the UPDATE predicate is the sole correctness gate — but
+		// ensures a safe, typed error if it ever does.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23514" {
 			return nil, domain.ErrInsufficientStock
 		}
 		return nil, fmt.Errorf("atomic reserve UPDATE: %w", err)

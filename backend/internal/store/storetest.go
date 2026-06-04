@@ -51,7 +51,20 @@ func newTestPool(t *testing.T) *pgxpool.Pool {
 	m.Close()
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, dsn)
+
+	// Use a high MaxConns so all goroutines in concurrency tests (max 100)
+	// can hold a real Postgres connection simultaneously. With the default
+	// pool size (~4-14), goroutines queue up and serialize at the pool level
+	// before they ever reach Postgres — masking TOCTOU bugs. MaxConns = 110
+	// exceeds the largest test goroutine count (100 in T016) so every
+	// goroutine contends at the actual DB row lock, not at the pool.
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse pool config: %v", err)
+	}
+	cfg.MaxConns = 110
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatalf("create pool: %v", err)
 	}
