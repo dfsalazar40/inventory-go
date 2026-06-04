@@ -32,7 +32,7 @@ A hold by one user on N units of one item.
 | `quantity` | `integer` | NOT NULL, `CHECK (quantity > 0)` | Units held |
 | `status` | `text` | NOT NULL, `CHECK (status IN ('pending','confirmed','released','expired'))` | Lifecycle state |
 | `created_at` | `timestamptz` | NOT NULL DEFAULT now() | |
-| `expires_at` | `timestamptz` | NULL when confirmed | `created_at + TTL`; reset on add if enabled; NULL once confirmed |
+| `expires_at` | `timestamptz` | NULL when confirmed | `created_at + TTL`; reset on add (per-user, per-item) if enabled; NULL once confirmed |
 | `confirmed_at` | `timestamptz` | NULL | Set on confirm |
 | `released_at` | `timestamptz` | NULL | Set on release |
 
@@ -74,7 +74,7 @@ Not a table. A `user_id` is a browser-generated UUID with a ~1-day client-side T
 
 **Transition rules**:
 - **→ PENDING**: only via reserve. Guarded by `UPDATE items SET reserved = reserved + $q WHERE total_stock - reserved >= $q`; 0 rows ⇒ rejected (insufficient stock / conflict). Reservation row inserted in the same transaction.
-- **PENDING → CONFIRMED**: `UPDATE reservations SET status='confirmed', confirmed_at=now(), expires_at=NULL WHERE id=$id AND status='pending'`. 0 rows ⇒ "not found / no longer pending". **No stock change.**
+- **PENDING → CONFIRMED**: `UPDATE reservations SET status='confirmed', confirmed_at=now(), expires_at=NULL WHERE id=$id AND status='pending'`. **No stock change.** Idempotency is **by reservation state** (the row already carries the idempotency key from its reserve — confirm sends no new key): if the conditional UPDATE matches 0 rows, re-read the row — if it is already `confirmed`, return it as a safe no-op (HTTP 200); if it is `released`/`expired`/absent, reject as "not found / no longer pending" (404/409).
 - **PENDING → RELEASED**: conditional transition returns `quantity` to `items.reserved` exactly once (research §3). From any non-pending state ⇒ safe no-op.
 - **PENDING → EXPIRED**: sweeper/lazy transition, same exactly-once return. Only `pending` rows expire; `confirmed` never expires (FR-005).
 - All terminal states reject further confirm/expire; release on a terminal state is a no-op.

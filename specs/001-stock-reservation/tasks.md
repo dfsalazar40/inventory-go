@@ -109,12 +109,12 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 
 ### Tests for User Story 8 (write first, must FAIL) ⚠️
 
-- [ ] T025 [P] [US8] Confirm test: pending→confirmed (no stock change, `expires_at` NULL); does NOT expire after TTL; re-confirm same key = no-op; confirm released/expired → 404/409, in `backend/internal/store/confirm_test.go`
+- [ ] T025 [P] [US8] Confirm test: pending→confirmed (no stock change, `expires_at` NULL); does NOT expire after TTL; re-confirm already-confirmed = 200 no-op (idempotent by reservation state); confirm released/expired/absent → 404/409; **confirm-vs-expire race**: TTL sweep and confirm fire simultaneously on the same pending row → exactly one outcome wins (confirmed & kept, or expired & stock returned once), never both, in `backend/internal/store/confirm_test.go`
 
 ### Implementation for User Story 8
 
 - [ ] T026 [US8] Implement confirm conditional transition (`... WHERE status='pending'`) in `backend/internal/store/reservations.go`
-- [ ] T027 [US8] Implement `POST /reservations/{id}/confirm` handler with typed not-pending/not-found results in `backend/internal/api/reservations.go`
+- [ ] T027 [US8] Implement `POST /reservations/{id}/confirm` handler: conditional transition; on 0 rows re-read the row and return 200 no-op if already `confirmed`, else typed 404 not-found / 409 not-pending. Confirm carries no new idempotency key (idempotent by reservation state), in `backend/internal/api/reservations.go`
 
 **Checkpoint**: The two-phase reserve flow (hold → confirm) is complete.
 
@@ -135,7 +135,7 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 - [ ] T029 [US2] Implement `GET /items` handler + store query (available = total − reserved) in `backend/internal/api/items.go`
 - [ ] T030 [US2] Implement the WebSocket hub (register/unregister/broadcast) in `backend/internal/realtime/hub.go`
 - [ ] T031 [US2] Publish stock/reservation events from reserve & confirm paths; mount `/ws` and wire the hub in `backend/cmd/server/main.go`
-- [ ] T032 [P] [US2] Frontend: `useWebSocket` hook (connect, reconnect backoff, snapshot-on-connect reconcile) in `frontend/src/hooks/useWebSocket.ts`
+- [ ] T032 [P] [US2] Frontend `useWebSocket` hook, **test-first**: write `frontend/src/hooks/useWebSocket.test.ts` asserting reconnect-with-backoff and snapshot-on-connect reconcile (simulate a dropped channel → client refetches the REST snapshot and reconciles to backend truth), make it FAIL, then implement connect/reconnect/reconcile in `frontend/src/hooks/useWebSocket.ts`
 - [ ] T033 [US2] Frontend: `InventoryDashboard` + `ItemCard` (live available, "Out of Stock") in `frontend/src/components/`
 
 **Checkpoint**: Live, synced inventory is visible and reactive.
@@ -150,13 +150,13 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 
 ### Tests for User Story 3 (write first, must FAIL) ⚠️
 
-- [ ] T034 [P] [US3] TTL test: pending expires & returns stock once; confirmed never expires; expire-vs-release race returns once; `RESET_TTL_ON_ADD` on/off behavior, in `backend/internal/ttl/sweeper_test.go`
+- [ ] T034 [P] [US3] TTL test: pending expires & returns stock once; confirmed never expires; expire-vs-release race returns once; `RESET_TTL_ON_ADD` on/off behavior (per-user, per-item scope), in `backend/internal/ttl/sweeper_test.go`
 
 ### Implementation for User Story 3
 
 - [ ] T035 [US3] Implement TTL sweeper (`time.Ticker` ~1s) running the conditional `pending→expired` transition in `backend/internal/ttl/sweeper.go`
 - [ ] T036 [US3] Implement lazy expiration on read in reservation queries in `backend/internal/store/reservations.go`
-- [ ] T037 [US3] Implement `RESET_TTL_ON_ADD` (reset the user's pending window on new hold) in the reserve path in `backend/internal/store/reservations.go`
+- [ ] T037 [US3] Implement `RESET_TTL_ON_ADD` (on a new hold, reset `expires_at` for the user's pending holds **of that same item only** — per-user, per-item; other items untouched) in the reserve path in `backend/internal/store/reservations.go`
 - [ ] T038 [US3] Broadcast expiration events to the WebSocket hub in `backend/internal/ttl/sweeper.go`
 
 **Checkpoint**: Stock stays liquid; abandoned holds free themselves.
