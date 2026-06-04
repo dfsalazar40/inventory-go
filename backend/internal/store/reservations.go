@@ -51,6 +51,9 @@ type ReservationStorer interface {
 	// state (released/expired/confirmed), returns the current row as a no-op.
 	// Returns ErrNotFound if the id does not exist.
 	Release(ctx context.Context, reservationID string) (*domain.Reservation, error)
+	// ListByUser returns all PENDING and CONFIRMED reservations for a given user,
+	// applying lazy expiration so expired-but-unswept rows are excluded (FR-012).
+	ListByUser(ctx context.Context, userID string) ([]domain.Reservation, error)
 }
 
 // ReservationStore is the concrete Postgres-backed implementation.
@@ -298,6 +301,54 @@ func (s *ReservationStore) Release(ctx context.Context, reservationID string) (*
 	}
 
 	return reservation, nil
+}
+
+// ListByUser returns the PENDING and CONFIRMED reservations for a user.
+//
+// Design (FR-012, research §5 lazy expiration):
+//   - Fetches rows where status IN ('pending','confirmed') AND user_id = $1.
+//   - For pending rows, lazy expiration is applied (scanReservation). Rows that
+//     are lazily-expired are excluded from the result so the caller never sees
+//     stale pending holds when the sweeper is slightly behind.
+//   - Confirmed rows have no TTL and are always included.
+//
+// Returns an empty (non-nil) slice when the user has no active reservations.
+func (s *ReservationStore) ListByUser(ctx context.Context, userID string) ([]domain.Reservation, error) {
+	const q = `
+		SELECT id, item_id, user_id, quantity, status, created_at, expires_at,
+		       confirmed_at, released_at
+		  FROM reservations
+		 WHERE user_id = $1
+		   AND status IN ('pending', 'confirmed')
+		 ORDER BY created_at DESC`
+
+	rows, err := s.pool.Query(ctx, q, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list reservations by user: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.Reservation
+	for rows.Next() {
+		r, err := scanReservation(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan reservation: %w", err)
+		}
+		// Lazy expiration: skip rows that appear pending but are past their TTL.
+		// The sweeper will tombstone them shortly; we don't surface them to users.
+		if r.Status == domain.StatusExpired {
+			continue
+		}
+		out = append(out, *r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list reservations: rows error: %w", err)
+	}
+
+	if out == nil {
+		out = []domain.Reservation{}
+	}
+	return out, nil
 }
 
 // scanReservation scans a single reservation row from a pgx.Row.

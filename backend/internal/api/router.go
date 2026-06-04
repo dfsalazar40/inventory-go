@@ -32,6 +32,7 @@ func NewRouter(reservations *ReservationHandler, items *ItemHandler, ws WSHandle
 	// Mount reservation routes when available.
 	if reservations != nil {
 		r.Post("/reservations", reservations.Reserve)
+		r.Get("/reservations", reservations.ListReservations)
 		r.Post("/reservations/{id}/confirm", reservations.ConfirmReservation)
 		r.Delete("/reservations/{id}", reservations.ReleaseReservation)
 	}

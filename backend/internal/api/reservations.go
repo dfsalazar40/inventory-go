@@ -24,6 +24,9 @@ type ReservationStorer interface {
 	Reserve(ctx context.Context, p ReserveParams) (*domain.Reservation, error)
 	Confirm(ctx context.Context, reservationID string) (*domain.Reservation, error)
 	Release(ctx context.Context, reservationID string) (*domain.Reservation, error)
+	// ListByUser returns the PENDING + CONFIRMED reservations for a user (FR-012).
+	// Lazy expiration is applied: expired-but-unswept rows are excluded.
+	ListByUser(ctx context.Context, userID string) ([]domain.Reservation, error)
 }
 
 // ReservationHandler handles HTTP requests for the /reservations resource.
@@ -254,4 +257,36 @@ func (h *ReservationHandler) ReleaseReservation(w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(reservation) //nolint:errcheck
+}
+
+// ListReservations handles GET /reservations.
+//
+// Returns the calling user's active reservations (PENDING + CONFIRMED).
+// The user is identified by the X-User-Id header (enforced by middleware).
+// An optional `userId` query parameter overrides the scope (per OpenAPI contract)
+// but defaults to the header value.
+//
+// Lazy expiration is applied in the store layer so expired-but-unswept rows
+// are transparently excluded from the response (research §5, FR-012).
+//
+// Returns 200 with a (possibly empty) JSON array — never null.
+func (h *ReservationHandler) ListReservations(w http.ResponseWriter, r *http.Request) {
+	// Default scope: the authenticated user from the required header.
+	userID := r.Header.Get("X-User-Id")
+
+	// Optional query-param override (openapi.yaml: ?userId=<uuid>).
+	if qp := r.URL.Query().Get("userId"); qp != "" {
+		userID = qp
+	}
+
+	reservations, err := h.store.ListByUser(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error",
+			"an unexpected error occurred")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(reservations) //nolint:errcheck
 }

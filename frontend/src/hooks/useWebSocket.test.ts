@@ -17,8 +17,6 @@ import { useWebSocket } from './useWebSocket'
 
 // ── Mock WebSocket ────────────────────────────────────────────────────────────
 
-type WSEvent = 'open' | 'close' | 'message' | 'error'
-
 class MockWebSocket {
   static instances: MockWebSocket[] = []
 

@@ -190,13 +190,13 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 
 ### Tests for User Story 5 (write first, must FAIL) ⚠️
 
-- [ ] T042 [P] [US5] Frontend countdown unit test (counts down, removes at zero in sync with backend) in `frontend/src/hooks/useCountdown.test.ts`
+- [X] T042 [P] [US5] Frontend countdown unit test (counts down, removes at zero in sync with backend) in `frontend/src/hooks/useCountdown.test.ts`
 
 ### Implementation for User Story 5
 
-- [ ] T043 [US5] Implement `GET /reservations` (scoped to `X-User-Id`, pending + confirmed) in `backend/internal/api/reservations.go`
-- [ ] T044 [P] [US5] Frontend: `useReservations` + `useCountdown` hooks in `frontend/src/hooks/`
-- [ ] T045 [US5] Frontend: `ReservationPanel` with Confirm (above) and Release (below) per line + live countdown in `frontend/src/components/ReservationPanel.tsx`
+- [X] T043 [US5] Implement `GET /reservations` (scoped to `X-User-Id`, pending + confirmed) in `backend/internal/api/reservations.go`
+- [X] T044 [P] [US5] Frontend: `useReservations` + `useCountdown` hooks in `frontend/src/hooks/`
+- [X] T045 [US5] Frontend: `ReservationPanel` with Confirm (above) and Release (below) per line + live countdown in `frontend/src/components/ReservationPanel.tsx`
 
 **Checkpoint**: Users see and manage exactly what they hold.
 
@@ -210,11 +210,11 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 
 ### Tests for User Story 7 (write first, must FAIL) ⚠️
 
-- [ ] T046 [P] [US7] Frontend component tests: reserve happy-path; error-state (conflict + insufficient stock) renders the right message and keeps the UI usable, in `frontend/src/components/ItemCard.test.tsx`
+- [X] T046 [P] [US7] Frontend component tests: reserve happy-path; error-state (conflict + insufficient stock) renders the right message and keeps the UI usable, in `frontend/src/components/ItemCard.test.tsx`
 
 ### Implementation for User Story 7
 
-- [ ] T047 [US7] Frontend: map typed API errors to messages, add loading/success/error states and double-submit guard across reserve/confirm/release in `frontend/src/components/` + `frontend/src/api/client.ts`
+- [X] T047 [US7] Frontend: map typed API errors to messages, add loading/success/error states and double-submit guard across reserve/confirm/release in `frontend/src/components/` + `frontend/src/api/client.ts`
 
 **Checkpoint**: Every async action communicates clearly; no silent failures.
 
