@@ -1,0 +1,31 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gosimple
+    - ineffassign
+    - unused
+    - gofmt
+    - misspell
+    - revive
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+      - name: error-return
+        severity: warning
+  misspell:
+    locale: US
+
+issues:
+  max-same-issues: 5
+  exclude-rules:
+    # Test files may use unexported identifiers.
+    - path: "_test\\.go"
+      linters:
+        - revive
