@@ -19,8 +19,8 @@ func newIntegrationRouter(t *testing.T) (http.Handler, *store.ReservationStore) 
 	t.Helper()
 	pool := newAPITestPool(t)
 	rs := store.NewReservationStore(pool)
-	h := NewReservationHandler(rs, 0)
-	return NewRouter(h), rs
+	h := NewReservationHandler(rs, 0, nil)
+	return NewRouter(h, nil, nil), rs
 }
 
 // TestIdempotency_ConcurrentSameKeyAndPayload fires two reserve requests
@@ -37,8 +37,8 @@ func TestIdempotency_ConcurrentSameKeyAndPayload(t *testing.T) {
 	itemID := createAPITestItem(t, pool, "idempotency-concurrent", 5)
 
 	rs := store.NewReservationStore(pool)
-	h := NewReservationHandler(rs, 0)
-	router := NewRouter(h)
+	h := NewReservationHandler(rs, 0, nil)
+	router := NewRouter(h, nil, nil)
 
 	const goroutines = 2
 	idemKey := "test-concurrent-idempotency-key"

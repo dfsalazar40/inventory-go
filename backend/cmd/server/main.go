@@ -12,6 +12,7 @@ import (
 
 	"github.com/dfsalazar40/inventory-go/backend/internal/api"
 	"github.com/dfsalazar40/inventory-go/backend/internal/config"
+	"github.com/dfsalazar40/inventory-go/backend/internal/realtime"
 	"github.com/dfsalazar40/inventory-go/backend/internal/store"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -41,12 +42,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	// --- WebSocket hub ---
+	hub := realtime.NewHub()
+	go hub.Run()
+
 	// --- Store and handler wiring ---
 	reservationStore := store.NewReservationStore(pool)
-	reservationHandler := api.NewReservationHandler(reservationStore, cfg.ReservationTTL)
+	itemStore := store.NewItemStore(pool)
+
+	// Publisher is the hub: API handlers publish events after successful mutations;
+	// the hub broadcasts them to all WebSocket clients. The store remains pure.
+	reservationHandler := api.NewReservationHandler(reservationStore, cfg.ReservationTTL, hub)
+	itemHandler := api.NewItemHandler(itemStore)
 
 	// --- Router ---
-	router := api.NewRouter(reservationHandler)
+	router := api.NewRouter(reservationHandler, itemHandler, hub)
 
 	// Health check (no X-User-Id required — exempt from user-id middleware via routing order)
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -54,8 +64,6 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, `{"status":"ok"}`)
 	})
-
-	// TODO (later batches): mount /items, /ws routes here.
 
 	// --- HTTP server ---
 	srv := &http.Server{

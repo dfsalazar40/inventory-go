@@ -27,13 +27,15 @@ type ReservationStorer interface {
 
 // ReservationHandler handles HTTP requests for the /reservations resource.
 type ReservationHandler struct {
-	store ReservationStorer
-	ttl   time.Duration // default TTL for new reservations; 0 means "use store default"
+	store     ReservationStorer
+	ttl       time.Duration // default TTL for new reservations; 0 means "use store default"
+	publisher domain.Publisher
 }
 
-// NewReservationHandler creates a ReservationHandler with the given store and TTL.
-func NewReservationHandler(s ReservationStorer, ttl time.Duration) *ReservationHandler {
-	return &ReservationHandler{store: s, ttl: ttl}
+// NewReservationHandler creates a ReservationHandler with the given store, TTL, and publisher.
+// publisher may be nil — in that case no events are broadcast (safe for tests that don't need it).
+func NewReservationHandler(s ReservationStorer, ttl time.Duration, publisher domain.Publisher) *ReservationHandler {
+	return &ReservationHandler{store: s, ttl: ttl, publisher: publisher}
 }
 
 // createReservationRequest is the decoded request body for POST /reservations.
@@ -134,6 +136,18 @@ func (h *ReservationHandler) Reserve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Publish a broadcast event so WebSocket clients update their view.
+	// The event is fire-and-forget; it does not affect the HTTP response.
+	// We do not know the post-mutation available count here without an extra
+	// query, so we signal the event type + itemId; clients reconcile via
+	// snapshot (GET /items) on reconnect or use the reserved delta.
+	if h.publisher != nil {
+		h.publisher.Publish(domain.StockEvent{
+			Type:   domain.EventTypeReserved,
+			ItemID: reservation.ItemID,
+		})
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(reservation) //nolint:errcheck
@@ -170,6 +184,14 @@ func (h *ReservationHandler) ConfirmReservation(w http.ResponseWriter, r *http.R
 				"an unexpected error occurred")
 		}
 		return
+	}
+
+	// Publish a confirmed event so WebSocket clients can update reservation status.
+	if h.publisher != nil {
+		h.publisher.Publish(domain.StockEvent{
+			Type:   domain.EventTypeConfirmed,
+			ItemID: reservation.ItemID,
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")

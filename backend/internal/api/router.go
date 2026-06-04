@@ -9,9 +9,19 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 )
 
+// WSHandler is the minimal interface the router needs to mount the /ws endpoint.
+// Satisfied by *realtime.Hub. Declared here to avoid an import cycle.
+type WSHandler interface {
+	ServeWS(w http.ResponseWriter, r *http.Request)
+}
+
 // NewRouter builds the chi router with standard middleware.
 // Pass handlers to mount; nil handlers are skipped (useful for incremental batch delivery).
-func NewRouter(reservations *ReservationHandler) *chi.Mux {
+//
+//   - reservations: handles POST /reservations and POST /reservations/{id}/confirm
+//   - items: handles GET /items (nil skips the route)
+//   - ws: handles GET /ws WebSocket upgrade (nil skips the route)
+func NewRouter(reservations *ReservationHandler, items *ItemHandler, ws WSHandler) *chi.Mux {
 	r := chi.NewRouter()
 
 	// Middleware stack: recovery → structured logger → user-id enforcement.
@@ -23,6 +33,16 @@ func NewRouter(reservations *ReservationHandler) *chi.Mux {
 	if reservations != nil {
 		r.Post("/reservations", reservations.Reserve)
 		r.Post("/reservations/{id}/confirm", reservations.ConfirmReservation)
+	}
+
+	// Mount item routes when available.
+	if items != nil {
+		r.Get("/items", items.List)
+	}
+
+	// Mount WebSocket endpoint when available.
+	if ws != nil {
+		r.Get("/ws", ws.ServeWS)
 	}
 
 	return r
