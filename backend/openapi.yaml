@@ -1,0 +1,202 @@
+openapi: 3.1.0
+info:
+  title: Stock Reservation System API
+  version: 1.0.0
+  description: >
+    High-concurrency flash-sale stock reservation API. Reservations are a two-phase model:
+    "Reserve Item" creates a PENDING hold; "Confirm" finalizes it into a CONFIRMED reservation
+    that no longer expires; "Release" returns the unit. Reserve/confirm/release are idempotent.
+    All correctness guarantees (zero over-sell, exactly-once stock return) are enforced at the
+    PostgreSQL layer via atomic conditional writes.
+
+servers:
+  - url: http://localhost:8080
+    description: Local Docker Compose
+
+components:
+  parameters:
+    UserIdHeader:
+      name: X-User-Id
+      in: header
+      required: true
+      description: Browser-generated UUID identifying the anonymous user (no auth).
+      schema: { type: string, format: uuid }
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Frontend-generated UUID, one per "Reserve Item" action. Required (400 if missing).
+      schema: { type: string, format: uuid }
+
+  schemas:
+    Item:
+      type: object
+      required: [id, name, totalStock, reserved, available]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        totalStock: { type: integer, minimum: 0 }
+        reserved: { type: integer, minimum: 0 }
+        available:
+          type: integer
+          minimum: 0
+          description: Derived as totalStock - reserved; never negative.
+
+    ReservationStatus:
+      type: string
+      enum: [pending, confirmed, released, expired]
+
+    Reservation:
+      type: object
+      required: [id, itemId, userId, quantity, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        itemId: { type: string }
+        userId: { type: string, format: uuid }
+        quantity: { type: integer, minimum: 1 }
+        status: { $ref: '#/components/schemas/ReservationStatus' }
+        createdAt: { type: string, format: date-time }
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+          description: Null once confirmed; otherwise createdAt + TTL (or reset window).
+        confirmedAt: { type: [string, "null"], format: date-time }
+        releasedAt: { type: [string, "null"], format: date-time }
+
+    CreateReservationRequest:
+      type: object
+      required: [itemId, quantity]
+      properties:
+        itemId: { type: string }
+        quantity:
+          type: integer
+          minimum: 1
+          description: Units to hold. UI sends 1 per "Reserve Item" click; API accepts N.
+
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+          description: Typed, machine-readable error code.
+          enum:
+            - validation_error
+            - insufficient_stock
+            - conflict
+            - idempotency_key_conflict
+            - idempotency_key_required
+            - not_found
+            - not_pending
+        message:
+          type: string
+          description: Human-readable, user-facing message.
+
+  responses:
+    BadRequest:
+      description: Validation error or missing idempotency key.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Conflict:
+      description: Concurrency conflict, insufficient stock, or idempotency-key reuse with a different payload.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: Reservation not found or no longer in the required state.
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+paths:
+  /items:
+    get:
+      summary: List all items with live stock figures.
+      responses:
+        '200':
+          description: Current inventory snapshot (used for initial load and reconnection reconcile).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Item' }
+
+  /reservations:
+    post:
+      summary: Create a PENDING hold (phase 1 of the two-phase model). Idempotent.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateReservationRequest' }
+      responses:
+        '201':
+          description: Hold created (or replayed if the idempotency key + payload match a prior request).
+          content: { application/json: { schema: { $ref: '#/components/schemas/Reservation' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: >
+            Insufficient stock / lost the concurrency race (error=insufficient_stock|conflict),
+            OR the idempotency key was reused with a different payload (error=idempotency_key_conflict).
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+    get:
+      summary: List the calling user's active reservations (pending + confirmed).
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - name: userId
+          in: query
+          required: false
+          description: Optional explicit user scope; defaults to X-User-Id.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The user's reservations with live status and remaining time.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Reservation' }
+
+  /reservations/{id}/confirm:
+    post:
+      summary: Confirm a PENDING reservation into CONFIRMED (phase 2). Idempotent no-op if already confirmed.
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Reservation is CONFIRMED (units held, TTL stopped). Re-confirm returns the same result.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Reservation' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Reservation is no longer pending (released/expired) and cannot be confirmed.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /reservations/{id}:
+    delete:
+      summary: Release a reservation, returning its units to available. Safe to repeat (no-op).
+      parameters:
+        - $ref: '#/components/parameters/UserIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: >
+            Released (or already terminal). Returns stock at most once. Idempotent: releasing an
+            already released/expired reservation succeeds as a well-defined no-op.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Reservation' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /ws:
+    get:
+      summary: WebSocket endpoint for live stock/reservation events.
+      description: >
+        Upgrades to a WebSocket. The server broadcasts stock and reservation changes (reserve,
+        confirm, release, expire). Clients fetch a REST snapshot on connect/reconnect, then apply
+        live deltas, reconciling to backend truth.
+      responses:
+        '101': { description: Switching Protocols (WebSocket upgrade). }

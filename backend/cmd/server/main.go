@@ -64,9 +64,10 @@ func main() {
 	itemHandler := api.NewItemHandler(itemStore)
 
 	// --- Router ---
-	router := api.NewRouter(reservationHandler, itemHandler, hub)
+	// openapi.yaml lives next to the binary; in Docker it is copied from backend/openapi.yaml.
+	router := api.NewRouter(reservationHandler, itemHandler, hub, "openapi.yaml")
 
-	// Health check (no X-User-Id required — exempt from user-id middleware via routing order)
+	// Health check (no X-User-Id required — registered outside the protected group).
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

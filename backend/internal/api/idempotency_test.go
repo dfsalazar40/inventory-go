@@ -25,7 +25,7 @@ func TestIdempotency_MissingHeader(t *testing.T) {
 
 	rs := store.NewReservationStore(pool)
 	h := NewReservationHandler(rs, 0, nil)
-	router := NewRouter(h, nil, nil)
+	router := NewRouter(h, nil, nil, "")
 
 	body := fmt.Sprintf(`{"itemId":%q,"quantity":1}`, itemID)
 	req := httptest.NewRequest(http.MethodPost, "/reservations", bytes.NewBufferString(body))
@@ -70,7 +70,7 @@ func TestIdempotency_ConflictDifferentPayload(t *testing.T) {
 
 	rs := store.NewReservationStore(pool)
 	h := NewReservationHandler(rs, 0, nil)
-	router := NewRouter(h, nil, nil)
+	router := NewRouter(h, nil, nil, "")
 
 	idemKey := "test-conflict-key"
 
@@ -124,7 +124,7 @@ func TestIdempotency_SameKeyAndPayloadSequential(t *testing.T) {
 
 	rs := store.NewReservationStore(pool)
 	h := NewReservationHandler(rs, 0, nil)
-	router := NewRouter(h, nil, nil)
+	router := NewRouter(h, nil, nil, "")
 
 	idemKey := "test-sequential-replay-key"
 	body := fmt.Sprintf(`{"itemId":%q,"quantity":1}`, itemID)

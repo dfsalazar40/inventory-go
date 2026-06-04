@@ -60,7 +60,7 @@ func TestItems_GetAll_DerivedAvailable(t *testing.T) {
 
 	itemStore := store.NewItemStore(pool)
 	itemHandler := NewItemHandler(itemStore)
-	router := NewRouter(nil, itemHandler, nil)
+	router := NewRouter(nil, itemHandler, nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/items", nil)
 	req.Header.Set("X-User-Id", "user-list-items")
@@ -120,7 +120,7 @@ func TestItems_GetAll_AvailableNeverNegative(t *testing.T) {
 
 	itemStore := store.NewItemStore(pool)
 	itemHandler := NewItemHandler(itemStore)
-	router := NewRouter(nil, itemHandler, nil)
+	router := NewRouter(nil, itemHandler, nil, "")
 
 	req := httptest.NewRequest(http.MethodGet, "/items", nil)
 	req.Header.Set("X-User-Id", "user-cap-test")
@@ -169,7 +169,7 @@ func TestItems_Reserve_PublishesBroadcastEvent(t *testing.T) {
 	itemStore := store.NewItemStore(pool)
 	itemHandler := NewItemHandler(itemStore)
 	h := NewReservationHandler(rs, 0, pub)
-	router := NewRouter(h, itemHandler, nil)
+	router := NewRouter(h, itemHandler, nil, "")
 
 	body := fmt.Sprintf(`{"itemId":%q,"quantity":1}`, itemID)
 	req := httptest.NewRequest(http.MethodPost, "/reservations", bytes.NewBufferString(body))

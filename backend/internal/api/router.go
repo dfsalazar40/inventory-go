@@ -21,31 +21,39 @@ type WSHandler interface {
 //   - reservations: handles POST /reservations and POST /reservations/{id}/confirm
 //   - items: handles GET /items (nil skips the route)
 //   - ws: handles GET /ws WebSocket upgrade (nil skips the route)
-func NewRouter(reservations *ReservationHandler, items *ItemHandler, ws WSHandler) *chi.Mux {
+//   - openapiPath: filesystem path to the openapi.yaml file to serve at GET /openapi.yaml
+func NewRouter(reservations *ReservationHandler, items *ItemHandler, ws WSHandler, openapiPath string) *chi.Mux {
 	r := chi.NewRouter()
 
-	// Middleware stack: recovery → structured logger → user-id enforcement.
+	// Middleware stack: recovery → structured logger.
 	r.Use(middleware.Recoverer)
 	r.Use(structuredLogger)
-	r.Use(requireUserID)
 
-	// Mount reservation routes when available.
-	if reservations != nil {
-		r.Post("/reservations", reservations.Reserve)
-		r.Get("/reservations", reservations.ListReservations)
-		r.Post("/reservations/{id}/confirm", reservations.ConfirmReservation)
-		r.Delete("/reservations/{id}", reservations.ReleaseReservation)
-	}
+	// Public routes (no X-User-Id required): OpenAPI contract and health probe.
+	r.Get("/openapi.yaml", serveOpenAPI(openapiPath))
 
-	// Mount item routes when available.
-	if items != nil {
-		r.Get("/items", items.List)
-	}
+	// Protected routes: every resource endpoint requires X-User-Id.
+	r.Group(func(r chi.Router) {
+		r.Use(requireUserID)
 
-	// Mount WebSocket endpoint when available.
-	if ws != nil {
-		r.Get("/ws", ws.ServeWS)
-	}
+		// Mount reservation routes when available.
+		if reservations != nil {
+			r.Post("/reservations", reservations.Reserve)
+			r.Get("/reservations", reservations.ListReservations)
+			r.Post("/reservations/{id}/confirm", reservations.ConfirmReservation)
+			r.Delete("/reservations/{id}", reservations.ReleaseReservation)
+		}
+
+		// Mount item routes when available.
+		if items != nil {
+			r.Get("/items", items.List)
+		}
+
+		// Mount WebSocket endpoint when available.
+		if ws != nil {
+			r.Get("/ws", ws.ServeWS)
+		}
+	})
 
 	return r
 }

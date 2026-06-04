@@ -18,6 +18,7 @@ WORKDIR /app
 
 COPY --from=builder /inventory-server /app/inventory-server
 COPY --from=builder /app/migrations /app/migrations
+COPY --from=builder /app/openapi.yaml /app/openapi.yaml
 
 EXPOSE 8080
 
