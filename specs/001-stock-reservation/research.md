@@ -109,9 +109,10 @@ from conflicting reuse (FR-010).
 - **Lazy expiration on read**: any query that returns reservations treats `pending` rows past
   `expires_at` as expired, so a momentary sweeper lag never shows stale holds.
 - **`RESET_TTL_ON_ADD`** (env flag, **default `true`**): when enabled, creating a new pending hold
-  updates `expires_at = now() + ttl` for **all of that user's pending reservations** (one fresh
-  shared window). When disabled, each hold keeps its original `created_at + ttl`. The same flag
-  drives the value the frontend countdown renders.
+  updates `expires_at = now() + ttl` for **that user's pending reservations of the same item only**
+  (per-user, per-item — one fresh shared window scoped to the item; holds on other items are
+  untouched). When disabled, each hold keeps its original `created_at + ttl`. The same flag drives
+  the value the frontend countdown renders.
 
 **Rationale**: The sweeper guarantees prompt, server-authoritative expiration; lazy reads close the
 sub-second gap. Making the reset behavior a documented flag satisfies the clarified NFR without
