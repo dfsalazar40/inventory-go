@@ -1,10 +1,16 @@
 /**
  * T033 — Light render tests for ItemCard.
+ * T046 [US7] — Error-state tests (test-first; must fail before typed-error implementation).
  *
  * Verifies:
  *   - Shows item name and stock figures.
  *   - Shows "Out of Stock" badge and disables reserve button when available === 0.
  *   - Shows "Reserve Item" button and calls onReserve when available > 0.
+ *   - (T046) Reserve happy-path: success clears any error state and keeps UI usable.
+ *   - (T046) Conflict error ("Item Taken") shows a distinct, user-readable message.
+ *   - (T046) Insufficient-stock error shows a distinct, user-readable message.
+ *   - (T046) Transient/network error shows a fallback non-blocking message.
+ *   - (T046) UI stays usable after each error (button is re-enabled, not blocked/crashed).
  */
 
 import { render, screen } from '@testing-library/react'
@@ -59,5 +65,61 @@ describe('ItemCard', () => {
     const btn = screen.getByRole('button')
     expect(btn).toBeDisabled()
     expect(btn).toHaveTextContent('Reserving…')
+  })
+
+  // ── T046 [US7] error-state tests ────────────────────────────────────────────
+
+  it('(T046) shows no error message by default (happy path)', () => {
+    render(<ItemCard item={baseItem} />)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('(T046) shows a conflict-specific message for the conflict error code', () => {
+    render(<ItemCard item={baseItem} errorCode="conflict" />)
+
+    const alert = screen.getByRole('alert')
+    expect(alert).toBeInTheDocument()
+    // Must be a DISTINCT, user-readable message — not a raw code or generic text
+    expect(alert.textContent).toMatch(/item taken|reserved by another/i)
+  })
+
+  it('(T046) shows an insufficient-stock-specific message for insufficient_stock', () => {
+    render(<ItemCard item={baseItem} errorCode="insufficient_stock" />)
+
+    const alert = screen.getByRole('alert')
+    expect(alert).toBeInTheDocument()
+    expect(alert.textContent).toMatch(/not enough stock|insufficient/i)
+    // Must be DISTINCT from the conflict message
+    expect(alert.textContent).not.toMatch(/item taken|reserved by another/i)
+  })
+
+  it('(T046) shows a validation message for validation_error', () => {
+    render(<ItemCard item={baseItem} errorCode="validation_error" />)
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toMatch(/invalid|quantity/i)
+  })
+
+  it('(T046) shows a transient-error message for network/unknown errors', () => {
+    render(<ItemCard item={baseItem} errorCode="network_error" />)
+    const alert = screen.getByRole('alert')
+    expect(alert).toBeInTheDocument()
+    // Must be non-blocking (alert exists but button is still usable)
+    const btn = screen.getByRole('button', { name: /reserve/i })
+    expect(btn).not.toBeDisabled()
+  })
+
+  it('(T046) UI stays usable after a conflict error (button is re-enabled)', () => {
+    render(<ItemCard item={baseItem} errorCode="conflict" isReserving={false} />)
+
+    // The reserve button must still be present and enabled
+    const btn = screen.getByRole('button', { name: /reserve/i })
+    expect(btn).not.toBeDisabled()
+  })
+
+  it('(T046) UI stays usable after an insufficient-stock error (button is re-enabled)', () => {
+    render(<ItemCard item={baseItem} errorCode="insufficient_stock" isReserving={false} />)
+
+    const btn = screen.getByRole('button', { name: /reserve/i })
+    expect(btn).not.toBeDisabled()
   })
 })
