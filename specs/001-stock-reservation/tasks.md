@@ -222,11 +222,11 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 
 ## Phase 11: Polish & Cross-Cutting Concerns
 
-- [ ] T048 [P] Serve `openapi.yaml` from the backend (e.g. `GET /openapi.yaml`) and keep it in sync with handlers in `backend/internal/api/`
-- [ ] T049 [P] Write `README.md`: concurrency strategy, how to run, how to run tests, LLM used + why, time-taken
-- [ ] T050 [P] Update `spec-kit-notes.md` with assumptions/pivots (two-phase model, frontend idempotency key, `RESET_TTL_ON_ADD`)
-- [ ] T051 Run `quickstart.md` validation end-to-end: `docker compose up`, manual two-tab realtime check
-- [ ] T052 Run full suites green: `go test -race ./...` (backend) and `npm test` (frontend); final cleanup
+- [X] T048 [P] Serve `openapi.yaml` from the backend (e.g. `GET /openapi.yaml`) and keep it in sync with handlers in `backend/internal/api/`
+- [X] T049 [P] Write `README.md`: concurrency strategy, how to run, how to run tests, LLM used + why, time-taken
+- [X] T050 [P] Update `spec-kit-notes.md` with assumptions/pivots (two-phase model, frontend idempotency key, `RESET_TTL_ON_ADD`)
+- [X] T051 Run `quickstart.md` validation end-to-end: `docker compose up`, manual two-tab realtime check
+- [X] T052 Run full suites green: `go test -race -p 1 ./...` (backend) and `npm test` (frontend); final cleanup
 
 ---
 

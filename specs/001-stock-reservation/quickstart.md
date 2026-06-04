@@ -6,7 +6,7 @@ How to run, exercise, and test the full stack. The whole system comes up with a 
 ## Prerequisites
 
 - Docker + Docker Compose
-- (For local dev outside containers) Go 1.24+, Node 22+
+- (For local dev outside containers) Go 1.26.3+, Node 22+
 
 ## Run the whole stack
 
@@ -43,13 +43,13 @@ KEY=$(uuidgen)
 curl -s -X POST http://localhost:8080/reservations \
   -H "X-User-Id: $USER" -H "Idempotency-Key: $KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"itemId":"vintage-camera","quantity":1}'
+  -d '{"itemId":"item-vintage-camera","quantity":1}'
 
 # Replaying the SAME key + payload returns the SAME reservation (no second decrement):
 curl -s -X POST http://localhost:8080/reservations \
   -H "X-User-Id: $USER" -H "Idempotency-Key: $KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"itemId":"vintage-camera","quantity":1}'
+  -d '{"itemId":"item-vintage-camera","quantity":1}'
 
 # 2) Confirm it (phase 2) — TTL stops, units stay held:
 curl -s -X POST http://localhost:8080/reservations/<RES_ID>/confirm -H "X-User-Id: $USER"
@@ -60,17 +60,21 @@ curl -s -X DELETE http://localhost:8080/reservations/<RES_ID> -H "X-User-Id: $US
 # Missing Idempotency-Key on reserve -> 400:
 curl -s -X POST http://localhost:8080/reservations \
   -H "X-User-Id: $USER" -H 'Content-Type: application/json' \
-  -d '{"itemId":"vintage-camera","quantity":1}'
+  -d '{"itemId":"item-vintage-camera","quantity":1}'
 ```
 
 ## Run the tests
 
 ### Backend (concurrency + idempotency — the proof of correctness)
 
+The backend integration tests require a running Postgres instance and **must run serially** (`-p 1`).
+Each package opens its own large pgx connection pool; parallel package runs exhaust Postgres
+`max_connections` and cause spurious failures.
+
 ```bash
 cd backend
-go test ./...            # full suite against a Postgres test instance
-go test -race ./...      # race detector on
+TEST_DATABASE_URL=postgres://inventory:inventory@localhost:5432/inventory?sslmode=disable \
+  go test -race -p 1 ./...
 ```
 
 Key suites:
