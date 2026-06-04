@@ -89,13 +89,13 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 
 ### Tests for User Story 6 (write first, must FAIL) ⚠️
 
-- [ ] T021 [P] [US6] Parallel-duplicate-key test: same key+payload twice concurrently → one reservation, one decrement, in `backend/internal/api/idempotency_concurrency_test.go`
-- [ ] T022 [P] [US6] Conflict/required test: same key + different payload → 409; missing header → 400, in `backend/internal/api/idempotency_test.go`
+- [X] T021 [P] [US6] Parallel-duplicate-key test: same key+payload twice concurrently → one reservation, one decrement, in `backend/internal/api/idempotency_concurrency_test.go`
+- [X] T022 [P] [US6] Conflict/required test: same key + different payload → 409; missing header → 400, in `backend/internal/api/idempotency_test.go`
 
 ### Implementation for User Story 6
 
-- [ ] T023 [US6] Implement idempotency store (`INSERT ... ON CONFLICT DO NOTHING`, payload hashing, replay vs conflict) in `backend/internal/store/idempotency.go`
-- [ ] T024 [US6] Enforce required `Idempotency-Key` and wire replay/conflict into `POST /reservations` in `backend/internal/api/reservations.go`
+- [X] T023 [US6] Implement idempotency store (`INSERT ... ON CONFLICT DO NOTHING`, payload hashing, replay vs conflict) in `backend/internal/store/idempotency.go`
+- [X] T024 [US6] Enforce required `Idempotency-Key` and wire replay/conflict into `POST /reservations` in `backend/internal/api/reservations.go`
 
 **Checkpoint**: Reserve is now both concurrency-safe and retry-safe.
 
@@ -109,12 +109,12 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 
 ### Tests for User Story 8 (write first, must FAIL) ⚠️
 
-- [ ] T025 [P] [US8] Confirm test: pending→confirmed (no stock change, `expires_at` NULL); does NOT expire after TTL; re-confirm already-confirmed = 200 no-op (idempotent by reservation state); confirm released/expired/absent → 404/409; **confirm-vs-expire race**: TTL sweep and confirm fire simultaneously on the same pending row → exactly one outcome wins (confirmed & kept, or expired & stock returned once), never both, in `backend/internal/store/confirm_test.go`
+- [X] T025 [P] [US8] Confirm test: pending→confirmed (no stock change, `expires_at` NULL); does NOT expire after TTL; re-confirm already-confirmed = 200 no-op (idempotent by reservation state); confirm released/expired/absent → 404/409; **confirm-vs-expire race**: TTL sweep and confirm fire simultaneously on the same pending row → exactly one outcome wins (confirmed & kept, or expired & stock returned once), never both, in `backend/internal/store/confirm_test.go`
 
 ### Implementation for User Story 8
 
-- [ ] T026 [US8] Implement confirm conditional transition (`... WHERE status='pending'`) in `backend/internal/store/reservations.go`
-- [ ] T027 [US8] Implement `POST /reservations/{id}/confirm` handler: conditional transition; on 0 rows re-read the row and return 200 no-op if already `confirmed`, else typed 404 not-found / 409 not-pending. Confirm carries no new idempotency key (idempotent by reservation state), in `backend/internal/api/reservations.go`
+- [X] T026 [US8] Implement confirm conditional transition (`... WHERE status='pending'`) in `backend/internal/store/reservations.go`
+- [X] T027 [US8] Implement `POST /reservations/{id}/confirm` handler: conditional transition; on 0 rows re-read the row and return 200 no-op if already `confirmed`, else typed 404 not-found / 409 not-pending. Confirm carries no new idempotency key (idempotent by reservation state), in `backend/internal/api/reservations.go`
 
 **Checkpoint**: The two-phase reserve flow (hold → confirm) is complete.
 
