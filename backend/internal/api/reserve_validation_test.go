@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +18,7 @@ type stubReservationStore struct {
 	called bool
 }
 
-func (s *stubReservationStore) Reserve(_ interface{}, _ ReserveParams) (*domain.Reservation, error) {
+func (s *stubReservationStore) Reserve(_ context.Context, _ ReserveParams) (*domain.Reservation, error) {
 	s.called = true
 	return nil, nil
 }

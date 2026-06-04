@@ -67,15 +67,15 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 
 ### Tests for User Story 1 (write first, must FAIL) ⚠️
 
-- [ ] T015 [P] [US1] Last-unit contention test: 50+ goroutines for 1 unit → exactly 1 succeeds, stock never negative, in `backend/internal/store/reserve_concurrency_test.go`
-- [ ] T016 [P] [US1] Oversell test: 100 goroutines for 10 units → exactly 10 succeed, 90 rejected, `reserved <= total_stock` invariant holds, in `backend/internal/store/reserve_oversell_test.go`
-- [ ] T017 [P] [US1] Validation test: quantity 0 / negative / non-integer / exceeding total rejected with no state change, in `backend/internal/api/reserve_validation_test.go`
+- [X] T015 [P] [US1] Last-unit contention test: 50+ goroutines for 1 unit → exactly 1 succeeds, stock never negative, in `backend/internal/store/reserve_concurrency_test.go`
+- [X] T016 [P] [US1] Oversell test: 100 goroutines for 10 units → exactly 10 succeed, 90 rejected, `reserved <= total_stock` invariant holds, in `backend/internal/store/reserve_oversell_test.go`
+- [X] T017 [P] [US1] Validation test: quantity 0 / negative / non-integer / exceeding total rejected with no state change, in `backend/internal/api/reserve_validation_test.go`
 
 ### Implementation for User Story 1
 
-- [ ] T018 [US1] Implement the atomic conditional reserve (`UPDATE items SET reserved = reserved + $q WHERE total_stock - reserved >= $q` + insert reservation in one tx) in `backend/internal/store/reservations.go`
-- [ ] T019 [US1] Implement reserve service mapping 0-rows → typed insufficient-stock/conflict error in `backend/internal/store/reservations.go`
-- [ ] T020 [US1] Implement `POST /reservations` handler with payload validation and typed error responses in `backend/internal/api/reservations.go`
+- [X] T018 [US1] Implement the atomic conditional reserve (`UPDATE items SET reserved = reserved + $q WHERE total_stock - reserved >= $q` + insert reservation in one tx) in `backend/internal/store/reservations.go`
+- [X] T019 [US1] Implement reserve service mapping 0-rows → typed insufficient-stock/conflict error in `backend/internal/store/reservations.go`
+- [X] T020 [US1] Implement `POST /reservations` handler with payload validation and typed error responses in `backend/internal/api/reservations.go`
 
 **Checkpoint**: MVP — reserve is concurrency-safe and independently testable.
 

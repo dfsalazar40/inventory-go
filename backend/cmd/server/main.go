@@ -12,6 +12,7 @@ import (
 
 	"github.com/dfsalazar40/inventory-go/backend/internal/api"
 	"github.com/dfsalazar40/inventory-go/backend/internal/config"
+	"github.com/dfsalazar40/inventory-go/backend/internal/store"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -40,8 +41,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	// --- Store and handler wiring ---
+	reservationStore := store.NewReservationStore(pool)
+	reservationHandler := api.NewReservationHandler(reservationStore, cfg.ReservationTTL)
+
 	// --- Router ---
-	router := api.NewRouter()
+	router := api.NewRouter(reservationHandler)
 
 	// Health check (no X-User-Id required — exempt from user-id middleware via routing order)
 	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -50,8 +55,7 @@ func main() {
 		fmt.Fprint(w, `{"status":"ok"}`)
 	})
 
-	// TODO (later batches): mount /items, /reservations, /ws routes here.
-	_ = pool // pool will be passed to store constructors in later batches
+	// TODO (later batches): mount /items, /ws routes here.
 
 	// --- HTTP server ---
 	srv := &http.Server{

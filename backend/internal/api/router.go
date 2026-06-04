@@ -10,14 +10,19 @@ import (
 )
 
 // NewRouter builds the chi router with standard middleware.
-// Handlers for specific routes are registered separately in each handler file.
-func NewRouter() *chi.Mux {
+// Pass handlers to mount; nil handlers are skipped (useful for incremental batch delivery).
+func NewRouter(reservations *ReservationHandler) *chi.Mux {
 	r := chi.NewRouter()
 
 	// Middleware stack: recovery → structured logger → user-id enforcement.
 	r.Use(middleware.Recoverer)
 	r.Use(structuredLogger)
 	r.Use(requireUserID)
+
+	// Mount reservation routes when available.
+	if reservations != nil {
+		r.Post("/reservations", reservations.Reserve)
+	}
 
 	return r
 }
