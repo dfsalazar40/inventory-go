@@ -14,6 +14,7 @@ import (
 	"github.com/dfsalazar40/inventory-go/backend/internal/config"
 	"github.com/dfsalazar40/inventory-go/backend/internal/realtime"
 	"github.com/dfsalazar40/inventory-go/backend/internal/store"
+	"github.com/dfsalazar40/inventory-go/backend/internal/ttl"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
@@ -46,13 +47,20 @@ func main() {
 	hub := realtime.NewHub()
 	go hub.Run()
 
+	// --- TTL sweeper: expires pending holds that have elapsed ---
+	// The sweeper runs in a dedicated goroutine and stops when the server shuts down.
+	sweeperCtx, sweeperCancel := context.WithCancel(context.Background())
+	sweeper := ttl.NewSweeper(pool, hub, cfg.ReservationTTL)
+	go sweeper.Run(sweeperCtx)
+
 	// --- Store and handler wiring ---
 	reservationStore := store.NewReservationStore(pool)
 	itemStore := store.NewItemStore(pool)
 
 	// Publisher is the hub: API handlers publish events after successful mutations;
 	// the hub broadcasts them to all WebSocket clients. The store remains pure.
-	reservationHandler := api.NewReservationHandler(reservationStore, cfg.ReservationTTL, hub)
+	reservationHandler := api.NewReservationHandler(reservationStore, cfg.ReservationTTL, hub).
+		WithResetTTLOnAdd(cfg.ResetTTLOnAdd)
 	itemHandler := api.NewItemHandler(itemStore)
 
 	// --- Router ---
@@ -88,6 +96,10 @@ func main() {
 	<-quit
 
 	slog.Info("shutting down server...")
+
+	// Stop the TTL sweeper first so no new expiration writes race with shutdown.
+	sweeperCancel()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 

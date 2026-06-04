@@ -150,14 +150,14 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 
 ### Tests for User Story 3 (write first, must FAIL) ⚠️
 
-- [ ] T034 [P] [US3] TTL test: pending expires & returns stock once; confirmed never expires; expire-vs-release race returns once; `RESET_TTL_ON_ADD` on/off behavior (per-user, per-item scope), in `backend/internal/ttl/sweeper_test.go`
+- [X] T034 [P] [US3] TTL test: pending expires & returns stock once; confirmed never expires; expire-vs-release race returns once; `RESET_TTL_ON_ADD` on/off behavior (per-user, per-item scope), in `backend/internal/ttl/sweeper_test.go`
 
 ### Implementation for User Story 3
 
-- [ ] T035 [US3] Implement TTL sweeper (`time.Ticker` ~1s) running the conditional `pending→expired` transition in `backend/internal/ttl/sweeper.go`
-- [ ] T036 [US3] Implement lazy expiration on read in reservation queries in `backend/internal/store/reservations.go`
-- [ ] T037 [US3] Implement `RESET_TTL_ON_ADD` (on a new hold, reset `expires_at` for the user's pending holds **of that same item only** — per-user, per-item; other items untouched) in the reserve path in `backend/internal/store/reservations.go`
-- [ ] T038 [US3] Broadcast expiration events to the WebSocket hub in `backend/internal/ttl/sweeper.go`
+- [X] T035 [US3] Implement TTL sweeper (`time.Ticker` ~1s) running the conditional `pending→expired` transition in `backend/internal/ttl/sweeper.go`
+- [X] T036 [US3] Implement lazy expiration on read in reservation queries in `backend/internal/store/reservations.go`
+- [X] T037 [US3] Implement `RESET_TTL_ON_ADD` (on a new hold, reset `expires_at` for the user's pending holds **of that same item only** — per-user, per-item; other items untouched) in the reserve path in `backend/internal/store/reservations.go`
+- [X] T038 [US3] Broadcast expiration events to the WebSocket hub in `backend/internal/ttl/sweeper.go`
 
 **Checkpoint**: Stock stays liquid; abandoned holds free themselves.
 
@@ -171,12 +171,12 @@ Web app (per plan.md): `backend/` (Go) and `frontend/` (React + Vite + TS) at re
 
 ### Tests for User Story 4 (write first, must FAIL) ⚠️
 
-- [ ] T039 [P] [US4] Release test: release returns stock once; double-release no-op; release-after-expire no-op (clock-skew case), in `backend/internal/store/release_test.go`
+- [X] T039 [P] [US4] Release test: release returns stock once; double-release no-op; release-after-expire no-op (clock-skew case), in `backend/internal/store/release_test.go`
 
 ### Implementation for User Story 4
 
-- [ ] T040 [US4] Implement release conditional transition returning stock exactly once in `backend/internal/store/reservations.go`
-- [ ] T041 [US4] Implement `DELETE /reservations/{id}` handler + broadcast in `backend/internal/api/reservations.go`
+- [X] T040 [US4] Implement release conditional transition returning stock exactly once in `backend/internal/store/reservations.go`
+- [X] T041 [US4] Implement `DELETE /reservations/{id}` handler + broadcast in `backend/internal/api/reservations.go`
 
 **Checkpoint**: Users control their holds; release races resolve cleanly.
 

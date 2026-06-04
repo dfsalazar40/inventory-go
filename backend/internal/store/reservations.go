@@ -26,6 +26,11 @@ type ReserveParams struct {
 	// IdempotencyKey is the frontend-generated key (Idempotency-Key header).
 	// Required: Reserve returns ErrIdempotencyKeyRequired when empty.
 	IdempotencyKey string
+	// ResetTTLOnAdd controls whether adding this hold resets expires_at for
+	// the user's existing pending holds on the same item (per-user, per-item).
+	// When true, a fresh TTL window is shared across all the user's pending
+	// holds of that item. Holds on other items are untouched.
+	ResetTTLOnAdd bool
 }
 
 // ttl returns the effective TTL for a reserve operation.
@@ -41,6 +46,11 @@ func (p ReserveParams) ttl() time.Duration {
 type ReservationStorer interface {
 	Reserve(ctx context.Context, p ReserveParams) (*domain.Reservation, error)
 	Confirm(ctx context.Context, reservationID string) (*domain.Reservation, error)
+	// Release transitions the reservation from PENDING to RELEASED and returns
+	// the current reservation state. If the reservation is already in a terminal
+	// state (released/expired/confirmed), returns the current row as a no-op.
+	// Returns ErrNotFound if the id does not exist.
+	Release(ctx context.Context, reservationID string) (*domain.Reservation, error)
 }
 
 // ReservationStore is the concrete Postgres-backed implementation.
@@ -134,6 +144,23 @@ func (s *ReservationStore) Reserve(ctx context.Context, p ReserveParams) (*domai
 		return nil, fmt.Errorf("insert reservation: %w", err)
 	}
 
+	// Step 2b: RESET_TTL_ON_ADD (T037, research §5, FR-017).
+	// When enabled, reset expires_at for ALL of this user's pending holds on this
+	// same item (including the one just inserted). Scoped to user_id + item_id
+	// ONLY — holds on other items are untouched, and other users' holds are
+	// untouched. The fresh window is now() + ttl evaluated inside Postgres.
+	if p.ResetTTLOnAdd {
+		const resetSQL = `
+			UPDATE reservations
+			   SET expires_at = $1
+			 WHERE user_id  = $2
+			   AND item_id  = $3
+			   AND status   = 'pending'`
+		if _, err := tx.Exec(ctx, resetSQL, expiresAt, p.UserID, p.ItemID); err != nil {
+			return nil, fmt.Errorf("reset TTL on add: %w", err)
+		}
+	}
+
 	// Step 3: idempotency key registration — inside the same transaction.
 	// ON CONFLICT (key) DO NOTHING: if this key is new, 1 row inserted (first
 	// call). If already present, 0 rows (duplicate). The result determines
@@ -217,7 +244,69 @@ func (s *ReservationStore) Confirm(ctx context.Context, reservationID string) (*
 	}
 }
 
+// Release transitions a reservation from PENDING to RELEASED and returns its
+// units to items.reserved exactly once (research §3).
+//
+// The conditional WHERE status='pending' means:
+//   - First call on a pending reservation → transition fires, stock returned.
+//   - Any subsequent call (already released / expired / confirmed / absent)
+//     → 0 rows affected → safe no-op, no error (FR-007, FR-008).
+//
+// This is the exactly-once mutex shared with the TTL sweeper: whichever
+// transition (release or expire) commits first wins; the other matches 0 rows.
+//
+// Returns the current reservation state regardless of whether the transition
+// fired (allows the handler to return the reservation per OpenAPI contract).
+// Returns ErrNotFound if the id does not exist at all.
+func (s *ReservationStore) Release(ctx context.Context, reservationID string) (*domain.Reservation, error) {
+	// Step 1: conditional transition + stock return atomically (research §3).
+	// This uses the WHERE status='pending' predicate so the decrement fires
+	// at most once across concurrent callers.
+	const releaseSQL = `
+		WITH released AS (
+			UPDATE reservations
+			   SET status = 'released', released_at = now()
+			 WHERE id = $1 AND status = 'pending'
+			RETURNING item_id, quantity
+		)
+		UPDATE items i
+		   SET reserved = i.reserved - r.quantity
+		  FROM released r
+		 WHERE i.id = r.item_id`
+
+	if _, err := s.pool.Exec(ctx, releaseSQL, reservationID); err != nil {
+		return nil, fmt.Errorf("release reservation: %w", err)
+	}
+
+	// Step 2: read the current reservation state to return per OpenAPI contract.
+	const selectSQL = `
+		SELECT id, item_id, user_id, quantity, status,
+		       created_at, expires_at, confirmed_at, released_at
+		  FROM reservations
+		 WHERE id = $1`
+
+	row := s.pool.QueryRow(ctx, selectSQL, reservationID)
+	reservation, err := scanReservation(row)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			// Reservation does not exist — safe to return ErrNotFound.
+			// Note: a prior release on an absent id is still a no-op (no
+			// stock was changed). The handler maps this to 200 no-op per FR-008.
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("release: read reservation: %w", err)
+	}
+
+	return reservation, nil
+}
+
 // scanReservation scans a single reservation row from a pgx.Row.
+//
+// T036 [US3] Lazy expiration on read: if the scanned row has status='pending'
+// and its expires_at is in the past, we treat it as expired so a momentary
+// sweeper lag never returns stale holds to callers.
+// Note: we do NOT mutate the DB here (that is the sweeper's job); we only
+// adjust the returned domain object's Status field.
 func scanReservation(row pgx.Row) (*domain.Reservation, error) {
 	var r domain.Reservation
 	var status string
@@ -238,5 +327,13 @@ func scanReservation(row pgx.Row) (*domain.Reservation, error) {
 	}
 
 	r.Status = domain.ReservationStatus(status)
+
+	// Lazy expiration: treat a pending row past its expires_at as expired in
+	// memory so callers (handlers, tests) never observe a stale pending status
+	// while the sweeper hasn't run yet. The DB row is NOT updated here.
+	if r.Status == domain.StatusPending && r.ExpiresAt != nil && time.Now().After(*r.ExpiresAt) {
+		r.Status = domain.StatusExpired
+	}
+
 	return &r, nil
 }
