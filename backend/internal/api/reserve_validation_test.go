@@ -27,6 +27,10 @@ func (s *stubReservationStore) Confirm(_ context.Context, _ string) (*domain.Res
 	return nil, nil
 }
 
+func (s *stubReservationStore) Release(_ context.Context, _ string) (*domain.Reservation, error) {
+	return nil, nil
+}
+
 // newReserveHandler builds the POST /reservations handler under test.
 func newReserveHandler(store ReservationStorer) http.HandlerFunc {
 	h := &ReservationHandler{store: store}

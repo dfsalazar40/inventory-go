@@ -23,19 +23,28 @@ type ReserveParams = store.ReserveParams
 type ReservationStorer interface {
 	Reserve(ctx context.Context, p ReserveParams) (*domain.Reservation, error)
 	Confirm(ctx context.Context, reservationID string) (*domain.Reservation, error)
+	Release(ctx context.Context, reservationID string) (*domain.Reservation, error)
 }
 
 // ReservationHandler handles HTTP requests for the /reservations resource.
 type ReservationHandler struct {
-	store     ReservationStorer
-	ttl       time.Duration // default TTL for new reservations; 0 means "use store default"
-	publisher domain.Publisher
+	store        ReservationStorer
+	ttl          time.Duration // default TTL for new reservations; 0 means "use store default"
+	publisher    domain.Publisher
+	resetTTLOnAdd bool // RESET_TTL_ON_ADD config (FR-017)
 }
 
 // NewReservationHandler creates a ReservationHandler with the given store, TTL, and publisher.
 // publisher may be nil — in that case no events are broadcast (safe for tests that don't need it).
 func NewReservationHandler(s ReservationStorer, ttl time.Duration, publisher domain.Publisher) *ReservationHandler {
 	return &ReservationHandler{store: s, ttl: ttl, publisher: publisher}
+}
+
+// WithResetTTLOnAdd configures the RESET_TTL_ON_ADD behaviour for the handler.
+// Call this after NewReservationHandler when the config flag is known.
+func (h *ReservationHandler) WithResetTTLOnAdd(v bool) *ReservationHandler {
+	h.resetTTLOnAdd = v
+	return h
 }
 
 // createReservationRequest is the decoded request body for POST /reservations.
@@ -110,6 +119,7 @@ func (h *ReservationHandler) Reserve(w http.ResponseWriter, r *http.Request) {
 		Quantity:       *req.Quantity,
 		TTL:            h.ttl,
 		IdempotencyKey: idemKey,
+		ResetTTLOnAdd:  h.resetTTLOnAdd,
 	}
 
 	reservation, err := h.store.Reserve(r.Context(), params)
@@ -190,6 +200,53 @@ func (h *ReservationHandler) ConfirmReservation(w http.ResponseWriter, r *http.R
 	if h.publisher != nil {
 		h.publisher.Publish(domain.StockEvent{
 			Type:   domain.EventTypeConfirmed,
+			ItemID: reservation.ItemID,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(reservation) //nolint:errcheck
+}
+
+// ReleaseReservation handles DELETE /reservations/{id}.
+//
+// Design (FR-007, FR-008, research §3):
+//   - Calls store.Release which uses a conditional WHERE status='pending'
+//     transition that returns stock exactly once.
+//   - Releasing a terminal reservation (released/expired/confirmed/absent) is a
+//     safe no-op → returns 200 (idempotent per FR-008).
+//   - On success, publishes a StockEvent of type EventTypeReleased to the hub.
+//
+// Returns 200 with the latest reservation state (or an empty body on no-op).
+// This endpoint carries no Idempotency-Key — release is idempotent by design
+// (the conditional transition is the idempotency mechanism).
+func (h *ReservationHandler) ReleaseReservation(w http.ResponseWriter, r *http.Request) {
+	reservationID := chi.URLParam(r, "id")
+	if reservationID == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "reservation id is required")
+		return
+	}
+
+	reservation, err := h.store.Release(r.Context(), reservationID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			// A non-existent id cannot double-decrement stock; treat as 200 no-op
+			// per FR-008. The caller's UI timer may have already cleaned up the row.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"status":"not_found"}`)) //nolint:errcheck
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal_error",
+			"an unexpected error occurred")
+		return
+	}
+
+	// Publish a release event so WebSocket clients update their inventory view.
+	if h.publisher != nil {
+		h.publisher.Publish(domain.StockEvent{
+			Type:   domain.EventTypeReleased,
 			ItemID: reservation.ItemID,
 		})
 	}
