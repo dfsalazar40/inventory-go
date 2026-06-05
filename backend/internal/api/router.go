@@ -21,8 +21,9 @@ type WSHandler interface {
 //   - reservations: handles POST /reservations and POST /reservations/{id}/confirm
 //   - items: handles GET /items (nil skips the route)
 //   - ws: handles GET /ws WebSocket upgrade (nil skips the route)
+//   - reset: handles POST /reset (nil skips the route)
 //   - openapiPath: filesystem path to the openapi.yaml file to serve at GET /openapi.yaml
-func NewRouter(reservations *ReservationHandler, items *ItemHandler, ws WSHandler, openapiPath string) *chi.Mux {
+func NewRouter(reservations *ReservationHandler, items *ItemHandler, ws WSHandler, reset *ResetHandler, openapiPath string) *chi.Mux {
 	r := chi.NewRouter()
 
 	// Middleware stack: recovery → CORS → structured logger.
@@ -58,6 +59,11 @@ func NewRouter(reservations *ReservationHandler, items *ItemHandler, ws WSHandle
 		// Mount item routes when available.
 		if items != nil {
 			r.Get("/items", items.List)
+		}
+
+		// Mount the reset endpoint when available.
+		if reset != nil {
+			r.Post("/reset", reset.Reset)
 		}
 	})
 

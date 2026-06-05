@@ -175,3 +175,29 @@ it here prevents confusion about whether it is an oversight or an intentional ch
 | Reservation history | Expired/released reservations may be hard-removed; no audit log | Spec Assumptions |
 | Seed data | Small catalog mirroring visual reference; one out-of-stock item | Spec Assumptions |
 | Scale | Single Postgres instance; backend is horizontally scalable (correctness is in DB) | Spec Assumptions |
+
+---
+
+## Pivot 5 — Demo polish increment (UI + reserve/reset behaviors)
+
+Post-delivery changes requested while validating the running app against the design
+reference. Recorded per Principle VI.
+
+- **Catalog quantities & order** (migration `000005_catalog_quantities`): refreshed the
+  seed to mirror the reference (Vintage Camera 14/20, Mechanical Watch 4/10, Acoustic
+  Guitar 8/16, Smart Flask 1/20, Running Shoes 0/12 out-of-stock, Gaming Mouse 1/15) and
+  added a `sort_order` column so the grid order matches the reference. Smart Flask's
+  reference "142 available" was a mock error → corrected to 1. `ON CONFLICT DO UPDATE`
+  supersedes the earlier `000004` DO-NOTHING seed.
+- **Reserve aggregation** (migration `000006_aggregate_pending`): repeated holds by the
+  same user on the same item now collapse into a single PENDING reservation (summed
+  quantity) via a partial unique index `(user_id, item_id) WHERE status='pending'` and
+  `INSERT ... ON CONFLICT DO UPDATE`. RESET_TTL_ON_ADD is folded into the conflict path
+  (conditional `expires_at`). Verified the concurrency and RESET_TTL suites stay green.
+- **POST /reset**: restores the demo to its initial seeded state (truncates reservations
+  + idempotency keys, reseeds the catalog) and broadcasts a per-item `reset` event. The
+  seed catalog constant is the single source of truth, mirroring migration `000005`.
+- **Frontend**: Tailwind v4 redesign ("Atomic Inventory"); out-of-stock disables the
+  reserve button (backend still the authority via the atomic conditional UPDATE);
+  confirmed reservations lock in (no Release button shown); the top-right button is now
+  Reset (was Refresh).

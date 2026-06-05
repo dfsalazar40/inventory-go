@@ -116,9 +116,28 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/Item' }
 
+  /reset:
+    post:
+      summary: Restore the demo to its initial seeded state.
+      description: >
+        Clears every reservation and idempotency key and resets the catalog to the
+        seeded baseline, then broadcasts a reset event per item so all connected
+        clients reconcile. Returns the fresh item list.
+      responses:
+        '200':
+          description: Inventory restored to the initial seeded state.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Item' }
+
   /reservations:
     post:
-      summary: Create a PENDING hold (phase 1 of the two-phase model). Idempotent.
+      summary: >
+        Create a PENDING hold (phase 1 of the two-phase model). Idempotent. Repeated
+        holds by the same user on the same item aggregate into one PENDING reservation
+        (quantity is summed) rather than creating a new row.
       parameters:
         - $ref: '#/components/parameters/UserIdHeader'
         - $ref: '#/components/parameters/IdempotencyKeyHeader'

@@ -130,38 +130,36 @@ func (s *ReservationStore) Reserve(ctx context.Context, p ReserveParams) (*domai
 		return nil, fmt.Errorf("atomic reserve UPDATE: %w", err)
 	}
 
-	// Step 2: insert the reservation row in the same transaction.
-	// The expiration time is set from TTL at hold creation.
+	// Step 2: upsert the reservation row in the same transaction.
+	//
+	// Aggregation (FR: repeated holds on the same item collapse into one row):
+	// a partial unique index on (user_id, item_id) WHERE status='pending' lets us
+	// ON CONFLICT DO UPDATE to ADD quantity to the user's existing pending hold of
+	// this item instead of creating a second row. items.reserved was already
+	// incremented atomically in Step 1, so the row quantity and items.reserved
+	// stay in lock-step.
+	//
+	// RESET_TTL_ON_ADD (T037, research §5, FR-017) is folded into the conflict
+	// path: when enabled, the existing pending hold's expires_at is refreshed to
+	// the new window; when disabled, it is preserved. Scoped to (user_id, item_id)
+	// by the conflict target — other items and other users are never touched.
 	expiresAt := time.Now().UTC().Add(p.ttl())
 
-	const insertSQL = `
+	const upsertSQL = `
 		INSERT INTO reservations (item_id, user_id, quantity, status, expires_at)
 		VALUES ($1, $2, $3, 'pending', $4)
+		ON CONFLICT (user_id, item_id) WHERE status = 'pending'
+		DO UPDATE SET
+			quantity   = reservations.quantity + EXCLUDED.quantity,
+			expires_at = CASE WHEN $5 THEN EXCLUDED.expires_at ELSE reservations.expires_at END
 		RETURNING id, item_id, user_id, quantity, status, created_at, expires_at,
 		          confirmed_at, released_at`
 
-	row := tx.QueryRow(ctx, insertSQL, p.ItemID, p.UserID, p.Quantity, expiresAt)
+	row := tx.QueryRow(ctx, upsertSQL, p.ItemID, p.UserID, p.Quantity, expiresAt, p.ResetTTLOnAdd)
 
 	r, err := scanReservation(row)
 	if err != nil {
-		return nil, fmt.Errorf("insert reservation: %w", err)
-	}
-
-	// Step 2b: RESET_TTL_ON_ADD (T037, research §5, FR-017).
-	// When enabled, reset expires_at for ALL of this user's pending holds on this
-	// same item (including the one just inserted). Scoped to user_id + item_id
-	// ONLY — holds on other items are untouched, and other users' holds are
-	// untouched. The fresh window is now() + ttl evaluated inside Postgres.
-	if p.ResetTTLOnAdd {
-		const resetSQL = `
-			UPDATE reservations
-			   SET expires_at = $1
-			 WHERE user_id  = $2
-			   AND item_id  = $3
-			   AND status   = 'pending'`
-		if _, err := tx.Exec(ctx, resetSQL, expiresAt, p.UserID, p.ItemID); err != nil {
-			return nil, fmt.Errorf("reset TTL on add: %w", err)
-		}
+		return nil, fmt.Errorf("upsert reservation: %w", err)
 	}
 
 	// Step 3: idempotency key registration — inside the same transaction.
@@ -301,6 +299,73 @@ func (s *ReservationStore) Release(ctx context.Context, reservationID string) (*
 	}
 
 	return reservation, nil
+}
+
+// seedCatalogSQL is the canonical "initial state" catalog — the single source of
+// truth for ResetToSeed. It mirrors migration 000005 so a reset restores exactly
+// the seeded inventory (quantities + display order).
+const seedCatalogSQL = `
+	INSERT INTO items (id, name, total_stock, reserved, sort_order) VALUES
+	    ('item-vintage-camera',   'Vintage Camera',   20,  6, 1),
+	    ('item-mechanical-watch', 'Mechanical Watch', 10,  6, 2),
+	    ('item-acoustic-guitar',  'Acoustic Guitar',  16,  8, 3),
+	    ('item-smart-flask',      'Smart Flask',      20, 19, 4),
+	    ('item-running-shoes',    'Running Shoes',    12, 12, 5),
+	    ('item-gaming-mouse',     'Gaming Mouse',     15, 14, 6)
+	ON CONFLICT (id) DO UPDATE
+	   SET name        = EXCLUDED.name,
+	       total_stock = EXCLUDED.total_stock,
+	       reserved    = EXCLUDED.reserved,
+	       sort_order  = EXCLUDED.sort_order;`
+
+// ResetToSeed restores the demo to its initial state: it clears every reservation
+// and idempotency key and resets the catalog to the seeded baseline, then returns
+// the fresh item list (with derived available) so the caller can return it and
+// broadcast the new state. Backs POST /reset.
+func (s *ReservationStore) ResetToSeed(ctx context.Context) ([]domain.Item, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin reset tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Clear all holds. idempotency_keys.reservation_id is ON DELETE CASCADE; we
+	// truncate both together so the FK is satisfied in a single statement.
+	if _, err := tx.Exec(ctx, `TRUNCATE reservations, idempotency_keys`); err != nil {
+		return nil, fmt.Errorf("reset: truncate: %w", err)
+	}
+	// Restore catalog baseline.
+	if _, err := tx.Exec(ctx, seedCatalogSQL); err != nil {
+		return nil, fmt.Errorf("reset: reseed catalog: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("reset: commit: %w", err)
+	}
+
+	// Read the restored catalog (post-commit) to return and broadcast.
+	const listSQL = `
+		SELECT id, name, total_stock, reserved,
+		       GREATEST(total_stock - reserved, 0) AS available, created_at
+		  FROM items
+		 ORDER BY sort_order, name`
+	rows, err := s.pool.Query(ctx, listSQL)
+	if err != nil {
+		return nil, fmt.Errorf("reset: list items: %w", err)
+	}
+	defer rows.Close()
+
+	items := []domain.Item{}
+	for rows.Next() {
+		var it domain.Item
+		if err := rows.Scan(&it.ID, &it.Name, &it.TotalStock, &it.Reserved, &it.Available, &it.CreatedAt); err != nil {
+			return nil, fmt.Errorf("reset: scan item: %w", err)
+		}
+		items = append(items, it)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reset: rows: %w", err)
+	}
+	return items, nil
 }
 
 // ListByUser returns the PENDING and CONFIRMED reservations for a user.

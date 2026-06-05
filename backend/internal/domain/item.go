@@ -20,6 +20,9 @@ const (
 	EventTypeConfirmed EventType = "confirmed"
 	EventTypeReleased  EventType = "released"
 	EventTypeExpired   EventType = "expired"
+	// EventTypeReset is broadcast for every item after POST /reset restores the
+	// seeded baseline, so all connected clients reconcile to the initial state.
+	EventTypeReset EventType = "reset"
 )
 
 // StockEvent is broadcast to all WebSocket clients after every committed mutation.

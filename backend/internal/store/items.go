@@ -27,7 +27,7 @@ func (s *ItemStore) ListItems(ctx context.Context) ([]domain.Item, error) {
 		       GREATEST(total_stock - reserved, 0) AS available,
 		       created_at
 		  FROM items
-		 ORDER BY name`
+		 ORDER BY sort_order, name`
 
 	rows, err := s.pool.Query(ctx, q)
 	if err != nil {
