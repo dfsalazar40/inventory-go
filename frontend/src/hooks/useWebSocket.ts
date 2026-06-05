@@ -44,10 +44,12 @@ export interface UseWebSocketOptions {
   apiBaseUrl?: string
 }
 
-const WS_BASE =
-  typeof window !== 'undefined'
-    ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`
-    : 'ws://localhost:8080/ws'
+// Derive the WebSocket URL from the same base as the REST client (client.ts),
+// NOT from window.location — the frontend (e.g. :5173) and backend (:8080) are
+// different origins, so using the page host points the socket at the frontend
+// and the connection fails. Convert the http(s) scheme to ws(s).
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8080'
+const WS_BASE = `${API_BASE.replace(/^http/, 'ws')}/ws`
 
 const MIN_BACKOFF_MS = 1_000
 const MAX_BACKOFF_MS = 30_000
