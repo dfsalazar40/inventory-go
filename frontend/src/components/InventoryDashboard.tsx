@@ -68,19 +68,18 @@ export function InventoryDashboard() {
     setItems(snapshot)
   }, [])
 
-  // Called for each live delta event from the WebSocket hub.
-  // We apply the delta optimistically to our local state so the UI updates immediately.
-  // On the next reconnect (if the socket drops), the snapshot reconciles to real truth.
+  // Called for each live event from the WebSocket hub. The backend broadcasts
+  // signal-only events (reserve/confirm/release carry no post-mutation counts),
+  // so we reconcile to backend truth by refetching the /items snapshot rather
+  // than trusting per-event deltas. This keeps the stock meters accurate for
+  // every event type (reserve, confirm, release, expire, reset).
   const handleEvent = useCallback(
     (event: StockEvent) => {
-      setItems((prev) =>
-        prev.map((item) => {
-          if (item.id !== event.itemId) return item
-          const reserved = event.reserved ?? item.reserved
-          const available = Math.max(item.totalStock - reserved, 0)
-          return { ...item, reserved, available }
-        }),
-      )
+      apiFetch<Item[]>('/items')
+        .then(setItems)
+        .catch(() => {
+          // Non-fatal; the next event or reconnect snapshot will reconcile.
+        })
       // Forward the event to useReservations so it can refetch the panel.
       notifyEvent(event)
     },
