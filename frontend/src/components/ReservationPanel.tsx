@@ -137,9 +137,11 @@ function ReservationLine({
         </div>
       )}
 
-      {/* Action buttons: Confirm above, Release below (spec two-phase model) */}
-      <div className="flex flex-col gap-2">
-        {isPending && (
+      {/* Action buttons only while PENDING: Confirm above, Release below (two-phase
+          model). Once CONFIRMED, the units are locked in — no Release button is
+          shown and the line just reflects the confirmed state. */}
+      {isPending && (
+        <div className="flex flex-col gap-2">
           <button
             type="button"
             disabled={isActing}
@@ -149,19 +151,19 @@ function ReservationLine({
           >
             {isActing ? 'Confirming…' : 'Confirm'}
           </button>
-        )}
 
-        {/* Release is ALWAYS enabled — never disabled based on countdown (FR-007, US4) */}
-        <button
-          type="button"
-          disabled={isActing}
-          onClick={() => onRelease(reservation.id)}
-          aria-label={`Release reservation for ${itemName}`}
-          className="rounded-lg border border-slate-200 bg-white py-2 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {isActing && !isPending ? 'Releasing…' : 'Release'}
-        </button>
-      </div>
+          {/* Release is never disabled based on the countdown (FR-007, US4). */}
+          <button
+            type="button"
+            disabled={isActing}
+            onClick={() => onRelease(reservation.id)}
+            aria-label={`Release reservation for ${itemName}`}
+            className="rounded-lg border border-slate-200 bg-white py-2 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isActing ? 'Releasing…' : 'Release'}
+          </button>
+        </div>
+      )}
     </li>
   )
 }

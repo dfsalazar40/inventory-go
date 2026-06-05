@@ -96,13 +96,19 @@ export function InventoryDashboard() {
     return () => clearTimeout(timer)
   }, [toast])
 
-  // Manual snapshot refetch (Refresh button) — reconciles inventory + reservations.
-  const handleRefresh = useCallback(async () => {
+  // Reset button — restores the demo to its initial seeded state: clears all
+  // reservations and resets the catalog on the backend (POST /reset), then
+  // reconciles this client's inventory + reservations. Other connected clients
+  // reconcile via the reset events the backend broadcasts.
+  const handleReset = useCallback(async () => {
     try {
-      const snapshot = await apiFetch<Item[]>('/items')
-      setItems(snapshot)
+      const fresh = await apiFetch<Item[]>('/reset', { method: 'POST' })
+      setItems(fresh)
     } catch {
-      // Non-fatal; the WebSocket snapshot will reconcile on the next event.
+      setToast({
+        title: 'Reset Failed',
+        message: 'Could not reset the inventory. Please try again.',
+      })
     }
     refreshReservations()
   }, [refreshReservations])
@@ -168,11 +174,11 @@ export function InventoryDashboard() {
             </span>
             <button
               type="button"
-              onClick={handleRefresh}
-              aria-label="Refresh inventory"
+              onClick={handleReset}
+              aria-label="Reset to initial state"
               className="flex items-center gap-2 rounded-lg border border-white/30 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-white/10"
             >
-              <span aria-hidden="true">⟳</span> Refresh
+              <span aria-hidden="true">⟳</span> Reset
             </button>
           </div>
         </header>

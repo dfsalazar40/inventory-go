@@ -108,14 +108,18 @@ export function ItemCard({ item, onReserve, isReserving = false, errorCode }: It
         </div>
       )}
 
-      {/* Reserve action / out-of-stock state */}
+      {/* Reserve action / out-of-stock state. When there is no stock the button is
+          disabled (frontend guard); the backend also rejects the reserve (atomic
+          conditional UPDATE → insufficient_stock), so over-selling is impossible. */}
       {outOfStock ? (
-        <span
+        <button
+          type="button"
+          disabled
           aria-label="Out of Stock"
-          className="rounded-lg bg-slate-100 py-2.5 text-center text-sm font-semibold text-slate-400"
+          className="cursor-not-allowed rounded-lg bg-slate-100 py-2.5 text-center text-sm font-semibold text-slate-400"
         >
           Out of Stock
-        </span>
+        </button>
       ) : (
         <button
           type="button"

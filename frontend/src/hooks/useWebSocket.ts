@@ -27,7 +27,7 @@ export interface Item {
 }
 
 export interface StockEvent {
-  type: 'reserved' | 'confirmed' | 'released' | 'expired'
+  type: 'reserved' | 'confirmed' | 'released' | 'expired' | 'reset'
   itemId: string
   reserved: number
   available: number
