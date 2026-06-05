@@ -14,7 +14,7 @@
  * "realtime channel drops").
  */
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiFetch } from '../api/client'
 
 /** Item shape as returned by GET /items (OpenAPI Item schema). */
@@ -54,11 +54,16 @@ const WS_BASE = `${API_BASE.replace(/^http/, 'ws')}/ws`
 const MIN_BACKOFF_MS = 1_000
 const MAX_BACKOFF_MS = 30_000
 
+/**
+ * @returns `connected` — true while the WebSocket is open. Drives the live-status
+ * indicator in the UI ("● Live" vs "Offline").
+ */
 export function useWebSocket({
   onItems,
   onEvent,
   wsUrl = WS_BASE,
-}: UseWebSocketOptions): void {
+}: UseWebSocketOptions): boolean {
+  const [connected, setConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const backoffRef = useRef<number>(MIN_BACKOFF_MS)
@@ -92,6 +97,7 @@ export function useWebSocket({
       }
       // Reset backoff on successful connection.
       backoffRef.current = MIN_BACKOFF_MS
+      setConnected(true)
       // Fetch REST snapshot immediately after opening — reconciles to backend truth.
       fetchSnapshot()
     }
@@ -107,6 +113,7 @@ export function useWebSocket({
     }
 
     ws.onclose = () => {
+      setConnected(false)
       if (unmountedRef.current) return
       wsRef.current = null
 
@@ -143,4 +150,6 @@ export function useWebSocket({
       }
     }
   }, [connect])
+
+  return connected
 }

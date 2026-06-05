@@ -1,5 +1,5 @@
 /**
- * ItemCard — displays a single inventory item with live available count.
+ * ItemCard — displays a single inventory item with a live stock meter.
  *
  * Shows "Out of Stock" when available === 0 (US2 acceptance scenario 2).
  * The available value is always provided from the parent; this component is
@@ -26,7 +26,7 @@ export type ApiErrorCode =
   | 'internal_error'
 
 /** Maps each typed error code to a distinct, user-readable message (SC-007). */
-const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
+export const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
   conflict: 'Item Taken — reserved by another user. Try again shortly.',
   insufficient_stock: 'Not enough stock available. Another user may have taken the last unit.',
   validation_error: 'Invalid request. Please check your quantity and try again.',
@@ -49,78 +49,70 @@ interface ItemCardProps {
 
 export function ItemCard({ item, onReserve, isReserving = false, errorCode }: ItemCardProps) {
   const outOfStock = item.available === 0
-  const errorMessage = errorCode ? (ERROR_MESSAGES[errorCode] ?? 'Something went wrong. Please try again.') : null
+  const percent = item.totalStock > 0 ? Math.round((item.available / item.totalStock) * 100) : 0
+  const initial = item.name.charAt(0).toUpperCase()
+  const errorMessage = errorCode
+    ? (ERROR_MESSAGES[errorCode] ?? 'Something went wrong. Please try again.')
+    : null
 
   return (
     <article
       aria-label={item.name}
-      style={{
-        border: '1px solid #e2e8f0',
-        borderRadius: '8px',
-        padding: '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px',
-        background: outOfStock ? '#f7f7f7' : '#ffffff',
-      }}
+      className="flex flex-col gap-4 rounded-xl border border-slate-100 bg-white p-5 shadow-sm"
     >
-      <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>{item.name}</h3>
+      {/* Header: avatar + name */}
+      <div className="flex items-center gap-3">
+        <div
+          aria-hidden="true"
+          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-brand text-lg font-bold text-white"
+        >
+          {initial}
+        </div>
+        <h3 className="text-lg leading-tight font-bold text-slate-800">{item.name}</h3>
+      </div>
 
-      <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px' }}>
-        <div>
-          <dt style={{ fontSize: '0.75rem', color: '#718096' }}>Total</dt>
-          <dd style={{ margin: 0, fontWeight: 500 }}>{item.totalStock}</dd>
+      {/* Stock meter */}
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs font-medium tracking-wide text-slate-500">Total Stock Meter</span>
+        <div
+          className="h-2 w-full overflow-hidden rounded-full bg-slate-200"
+          role="progressbar"
+          aria-valuenow={item.available}
+          aria-valuemin={0}
+          aria-valuemax={item.totalStock}
+        >
+          <div
+            className="h-full rounded-full bg-brand transition-[width] duration-500"
+            style={{ width: `${percent}%` }}
+          />
         </div>
-        <div>
-          <dt style={{ fontSize: '0.75rem', color: '#718096' }}>Reserved</dt>
-          <dd style={{ margin: 0, fontWeight: 500 }}>{item.reserved}</dd>
+        <div className="flex items-center justify-between text-sm">
+          <span className="font-medium text-slate-600">
+            {item.available} / {item.totalStock} {outOfStock ? '' : 'Available'}
+          </span>
+          {outOfStock ? (
+            <span className="font-semibold text-red-600">Out of Stock</span>
+          ) : (
+            <span className="font-semibold text-slate-500">{percent}%</span>
+          )}
         </div>
-        <div>
-          <dt style={{ fontSize: '0.75rem', color: outOfStock ? '#e53e3e' : '#38a169' }}>
-            Available
-          </dt>
-          <dd
-            style={{
-              margin: 0,
-              fontWeight: 700,
-              color: outOfStock ? '#e53e3e' : '#38a169',
-            }}
-          >
-            {item.available}
-          </dd>
-        </div>
-      </dl>
+      </div>
 
       {/* T047 [US7]: typed error feedback — non-blocking, distinct per error code */}
       {errorMessage && (
         <div
           role="alert"
-          style={{
-            padding: '8px 10px',
-            borderRadius: '4px',
-            background: '#fff5f5',
-            border: '1px solid #fc8181',
-            color: '#c53030',
-            fontSize: '0.8rem',
-          }}
+          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
         >
           {errorMessage}
         </div>
       )}
 
+      {/* Reserve action / out-of-stock state */}
       {outOfStock ? (
         <span
           aria-label="Out of Stock"
-          style={{
-            display: 'inline-block',
-            padding: '4px 10px',
-            borderRadius: '4px',
-            background: '#fed7d7',
-            color: '#9b2c2c',
-            fontSize: '0.8rem',
-            fontWeight: 600,
-            textAlign: 'center',
-          }}
+          className="rounded-lg bg-slate-100 py-2.5 text-center text-sm font-semibold text-slate-400"
         >
           Out of Stock
         </span>
@@ -130,16 +122,7 @@ export function ItemCard({ item, onReserve, isReserving = false, errorCode }: It
           disabled={isReserving}
           onClick={() => onReserve?.(item)}
           aria-label={`Reserve ${item.name}`}
-          style={{
-            padding: '6px 14px',
-            borderRadius: '4px',
-            border: 'none',
-            background: '#3182ce',
-            color: '#fff',
-            fontWeight: 600,
-            cursor: isReserving ? 'not-allowed' : 'pointer',
-            opacity: isReserving ? 0.6 : 1,
-          }}
+          className="rounded-lg bg-brand py-2.5 text-center text-sm font-semibold text-white transition-colors hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-60"
         >
           {isReserving ? 'Reserving…' : 'Reserve Item'}
         </button>

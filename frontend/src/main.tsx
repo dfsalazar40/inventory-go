@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import './index.css'
 import { InventoryDashboard } from './components/InventoryDashboard'
 
 const root = document.getElementById('root')

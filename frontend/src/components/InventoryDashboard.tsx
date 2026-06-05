@@ -1,23 +1,23 @@
 /**
- * InventoryDashboard — live inventory view + user's active reservations panel.
+ * InventoryDashboard — live inventory view + the user's active reservations panel.
  *
  * Connects to the backend WebSocket hub via useWebSocket. On every connect or
  * reconnect it fetches a fresh REST snapshot from GET /items, then applies live
  * delta events as they arrive — preventing permanent staleness after a dropped
  * channel (research §6, SC-005).
  *
- * T047 [US7]: reserve errors are mapped to typed ApiErrorCode values and passed
- * down to ItemCard as distinct, user-readable messages (FR-013, SC-007).
- * A double-submit guard prevents concurrent reserve requests on the same item.
+ * T047 [US7]: reserve errors are mapped to typed ApiErrorCode values and surfaced
+ * as a transient global toast with a distinct, user-readable message (FR-013,
+ * SC-007). A double-submit guard prevents concurrent reserve requests on the same item.
  *
- * US5: the ReservationPanel renders below the inventory grid and is kept in sync
- * by the same WebSocket event stream (notifyEvent → refetch).
+ * US5: the ReservationPanel renders in the right sidebar and is kept in sync by
+ * the same WebSocket event stream (notifyEvent → refetch).
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useWebSocket, type Item, type StockEvent } from '../hooks/useWebSocket'
 import { useReservations } from '../hooks/useReservations'
-import { ItemCard, type ApiErrorCode } from './ItemCard'
+import { ItemCard, ERROR_MESSAGES, type ApiErrorCode } from './ItemCard'
 import { ReservationPanel } from './ReservationPanel'
 import { apiFetch, ApiRequestError } from '../api/client'
 import { generateIdempotencyKey } from '../lib/identity'
@@ -43,12 +43,17 @@ function toErrorCode(err: unknown): ApiErrorCode {
   return 'network_error'
 }
 
+interface Toast {
+  title: string
+  message: string
+}
+
 export function InventoryDashboard() {
   const [items, setItems] = useState<Item[]>([])
   // Per-item reserving state (double-submit guard).
   const [reservingId, setReservingId] = useState<string | null>(null)
-  // Per-item typed error code (null = no error).
-  const [itemErrors, setItemErrors] = useState<Record<string, ApiErrorCode | null>>({})
+  // Transient global error notification.
+  const [toast, setToast] = useState<Toast | null>(null)
 
   const {
     reservations,
@@ -82,69 +87,129 @@ export function InventoryDashboard() {
     [notifyEvent],
   )
 
-  useWebSocket({ onItems: handleItems, onEvent: handleEvent })
+  const connected = useWebSocket({ onItems: handleItems, onEvent: handleEvent })
 
-  const handleReserve = useCallback(async (item: Item) => {
-    if (reservingId !== null) return // double-submit guard (only one item at a time)
+  // Auto-dismiss the toast after a few seconds.
+  useEffect(() => {
+    if (!toast) return
+    const timer = setTimeout(() => setToast(null), 5000)
+    return () => clearTimeout(timer)
+  }, [toast])
 
-    setReservingId(item.id)
-    // Clear any previous error for this item.
-    setItemErrors((prev) => ({ ...prev, [item.id]: null }))
-
+  // Manual snapshot refetch (Refresh button) — reconciles inventory + reservations.
+  const handleRefresh = useCallback(async () => {
     try {
-      await apiFetch('/reservations', {
-        method: 'POST',
-        body: JSON.stringify({ itemId: item.id, quantity: 1 }),
-        idempotencyKey: generateIdempotencyKey(),
-      })
-      // Success: clear the error (already null) — reservation panel will refresh via WebSocket.
-      setItemErrors((prev) => ({ ...prev, [item.id]: null }))
-    } catch (err: unknown) {
-      setItemErrors((prev) => ({ ...prev, [item.id]: toErrorCode(err) }))
-    } finally {
-      setReservingId(null)
+      const snapshot = await apiFetch<Item[]>('/items')
+      setItems(snapshot)
+    } catch {
+      // Non-fatal; the WebSocket snapshot will reconcile on the next event.
     }
-  }, [reservingId])
+    refreshReservations()
+  }, [refreshReservations])
+
+  const handleReserve = useCallback(
+    async (item: Item) => {
+      if (reservingId !== null) return // double-submit guard (only one item at a time)
+
+      setReservingId(item.id)
+      try {
+        await apiFetch('/reservations', {
+          method: 'POST',
+          body: JSON.stringify({ itemId: item.id, quantity: 1 }),
+          idempotencyKey: generateIdempotencyKey(),
+        })
+        // Success — the reservation panel and stock refresh via the WebSocket event.
+      } catch (err: unknown) {
+        const code = toErrorCode(err)
+        setToast({
+          title: code === 'conflict' ? 'Item Taken' : 'Reservation Failed',
+          message: ERROR_MESSAGES[code] ?? 'Something went wrong. Please try again.',
+        })
+      } finally {
+        setReservingId(null)
+      }
+    },
+    [reservingId],
+  )
 
   return (
-    <main style={{ padding: '24px', maxWidth: '900px', margin: '0 auto' }}>
-      <h1 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '8px' }}>
-        Live Inventory
-      </h1>
-      <p style={{ color: '#718096', marginBottom: '24px', fontSize: '0.9rem' }}>
-        Stock updates in real time — no refresh needed.
-      </p>
-
-      {items.length === 0 ? (
-        <p style={{ color: '#a0aec0' }}>Loading inventory…</p>
-      ) : (
+    <div className="min-h-full px-4 py-8">
+      {/* Transient global toast (top-center) */}
+      {toast && (
         <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-            gap: '16px',
-          }}
+          role="alert"
+          className="fixed top-6 left-1/2 z-50 flex max-w-md -translate-x-1/2 items-start gap-3 rounded-lg bg-red-500 px-5 py-3 text-white shadow-lg"
         >
-          {items.map((item) => (
-            <ItemCard
-              key={item.id}
-              item={item}
-              onReserve={handleReserve}
-              isReserving={reservingId === item.id}
-              errorCode={itemErrors[item.id] ?? null}
-            />
-          ))}
+          <span
+            aria-hidden="true"
+            className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/25 text-xs font-bold"
+          >
+            i
+          </span>
+          <div className="text-sm">
+            <p className="font-bold">{toast.title}</p>
+            <p className="text-white/90">{toast.message}</p>
+          </div>
         </div>
       )}
 
-      {/* US5 — my reservations panel */}
-      <ReservationPanel
-        reservations={reservations}
-        loading={reservationsLoading}
-        panelError={reservationsError}
-        items={items}
-        onRefresh={refreshReservations}
-      />
-    </main>
+      <div className="mx-auto max-w-6xl overflow-hidden rounded-2xl bg-white shadow-xl">
+        {/* Header bar */}
+        <header className="flex items-center justify-between bg-brand px-8 py-5">
+          <h1 className="font-display text-3xl font-bold text-white">Atomic Inventory</h1>
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-sm font-medium text-white">
+              Status:
+              <span
+                aria-hidden="true"
+                className={`h-2 w-2 rounded-full ${connected ? 'bg-emerald-400' : 'bg-slate-400'}`}
+              />
+              {connected ? 'Live' : 'Offline'}
+            </span>
+            <button
+              type="button"
+              onClick={handleRefresh}
+              aria-label="Refresh inventory"
+              className="flex items-center gap-2 rounded-lg border border-white/30 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-white/10"
+            >
+              <span aria-hidden="true">⟳</span> Refresh
+            </button>
+          </div>
+        </header>
+
+        {/* Body: inventory grid + reservations sidebar */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px]">
+          {/* Available inventory */}
+          <main className="p-8">
+            <h2 className="mb-5 text-xl font-bold text-slate-800">Available Inventory</h2>
+            {items.length === 0 ? (
+              <p className="text-slate-400">Loading inventory…</p>
+            ) : (
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+                {items.map((item) => (
+                  <ItemCard
+                    key={item.id}
+                    item={item}
+                    onReserve={handleReserve}
+                    isReserving={reservingId === item.id}
+                  />
+                ))}
+              </div>
+            )}
+          </main>
+
+          {/* Your reservations sidebar */}
+          <aside className="bg-slate-100 p-6">
+            <ReservationPanel
+              reservations={reservations}
+              loading={reservationsLoading}
+              panelError={reservationsError}
+              items={items}
+              onRefresh={refreshReservations}
+            />
+          </aside>
+        </div>
+      </div>
+    </div>
   )
 }
