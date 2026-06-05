@@ -25,12 +25,23 @@ type WSHandler interface {
 func NewRouter(reservations *ReservationHandler, items *ItemHandler, ws WSHandler, openapiPath string) *chi.Mux {
 	r := chi.NewRouter()
 
-	// Middleware stack: recovery → structured logger.
+	// Middleware stack: recovery → CORS → structured logger.
+	// CORS runs before requireUserID so browser preflight (OPTIONS, which carries
+	// no X-User-Id) is answered here instead of being rejected with 400.
 	r.Use(middleware.Recoverer)
+	r.Use(cors)
 	r.Use(structuredLogger)
 
-	// Public routes (no X-User-Id required): OpenAPI contract and health probe.
+	// Public routes (no X-User-Id required): OpenAPI contract and the WebSocket.
 	r.Get("/openapi.yaml", serveOpenAPI(openapiPath))
+
+	// WebSocket is public on purpose: browsers cannot set custom headers
+	// (X-User-Id) on the WS handshake, and the hub broadcasts global stock
+	// events that carry no per-user identity. Keeping it behind requireUserID
+	// would make every browser connection fail with 400.
+	if ws != nil {
+		r.Get("/ws", ws.ServeWS)
+	}
 
 	// Protected routes: every resource endpoint requires X-User-Id.
 	r.Group(func(r chi.Router) {
@@ -48,14 +59,35 @@ func NewRouter(reservations *ReservationHandler, items *ItemHandler, ws WSHandle
 		if items != nil {
 			r.Get("/items", items.List)
 		}
-
-		// Mount WebSocket endpoint when available.
-		if ws != nil {
-			r.Get("/ws", ws.ServeWS)
-		}
 	})
 
 	return r
+}
+
+// cors adds permissive CORS headers so the browser frontend (served from a
+// different origin, e.g. http://localhost:5173) can call the API. It reflects
+// the request Origin and answers preflight OPTIONS requests directly.
+// The custom headers X-User-Id and Idempotency-Key must be explicitly allowed
+// or the browser blocks the actual request.
+func cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-User-Id, Idempotency-Key")
+		w.Header().Set("Access-Control-Max-Age", "300")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // structuredLogger is a middleware that logs every request using slog.
