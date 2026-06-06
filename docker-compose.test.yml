@@ -1,0 +1,71 @@
+# Test stack — runs the backend and frontend test suites INSIDE containers.
+#
+# Why a separate file: the production images are minimal (backend = alpine +
+# static binary, frontend = nginx) and ship NO toolchain, so tests cannot run in
+# them. These ephemeral "runner" containers mount the source and use the Go/Node
+# base images instead.
+#
+# The test DB is isolated from the app stack on purpose: backend integration
+# tests open a large pgx pool (MaxConns=110) and would exhaust Postgres if the
+# live `backend` service were sharing the same database.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml run --rm backend-test
+#   docker compose -f docker-compose.test.yml run --rm frontend-test
+#   ./scripts/test.sh            # both, with teardown (recommended)
+
+name: inventory-test
+
+services:
+  db-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: inventory
+      POSTGRES_PASSWORD: inventory
+      POSTGRES_DB: inventory
+    # Raise max_connections above the test pool's MaxConns (110) so the 100-goroutine
+    # concurrency tests contend at the row lock, not at Postgres' connection limit.
+    command: ["postgres", "-c", "max_connections=200"]
+    # Ephemeral storage: every run starts from a clean schema (migrations run by the tests).
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U inventory -d inventory"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  backend-test:
+    image: golang:1.26-alpine
+    working_dir: /app
+    environment:
+      TEST_DATABASE_URL: "postgres://inventory:inventory@db-test:5432/inventory?sslmode=disable"
+      CGO_ENABLED: "1" # required by the -race detector
+      GOFLAGS: "-mod=mod"
+    volumes:
+      - ./backend:/app
+      - go-build-cache:/root/.cache/go-build
+      - go-mod-cache:/go/pkg/mod
+    depends_on:
+      db-test:
+        condition: service_healthy
+    # build-base provides gcc/musl-dev for -race. Run serial (-p 1) so only one
+    # package's pool is live at a time; -count=1 disables the test result cache.
+    command: >
+      sh -c "apk add --no-cache build-base >/dev/null &&
+             go test -race -p 1 -count=1 ./..."
+
+  frontend-test:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+    # npm ci installs Linux-native modules into the named volume (kept off the host).
+    command: sh -c "npm ci && npm test"
+
+volumes:
+  go-build-cache:
+  go-mod-cache:
+  frontend-node-modules:
