@@ -12,32 +12,7 @@
  */
 
 import type { Item } from '../hooks/useWebSocket'
-
-/** Typed API error codes from the OpenAPI Error schema. */
-export type ApiErrorCode =
-  | 'conflict'
-  | 'insufficient_stock'
-  | 'validation_error'
-  | 'idempotency_key_conflict'
-  | 'idempotency_key_required'
-  | 'not_found'
-  | 'not_pending'
-  | 'network_error'
-  | 'internal_error'
-
-/** Maps each typed error code to a distinct, user-readable message (SC-007). */
-export const ERROR_MESSAGES: Record<ApiErrorCode, string> = {
-  conflict: 'Item Taken — reserved by another user. Try again shortly.',
-  insufficient_stock: 'Not enough stock available. Another user may have taken the last unit.',
-  validation_error: 'Invalid request. Please check your quantity and try again.',
-  idempotency_key_conflict:
-    'A conflicting request was already made. Please refresh and try again.',
-  idempotency_key_required: 'Request error. Please refresh the page and try again.',
-  not_found: 'Item not found. Please refresh the page.',
-  not_pending: 'This action is no longer valid. Please refresh the page.',
-  network_error: 'Network error. Please check your connection and try again.',
-  internal_error: 'Something went wrong on our end. Please try again in a moment.',
-}
+import { ERROR_MESSAGES, type ApiErrorCode } from '../lib/errors'
 
 interface ItemCardProps {
   item: Item
@@ -49,7 +24,11 @@ interface ItemCardProps {
 
 export function ItemCard({ item, onReserve, isReserving = false, errorCode }: ItemCardProps) {
   const outOfStock = item.available === 0
-  const percent = item.totalStock > 0 ? Math.round((item.available / item.totalStock) * 100) : 0
+  // Occupancy meter: the bar FILLS as units get reserved (reserved / total),
+  // so reserving an item visibly advances the meter toward "fully reserved"
+  // instead of draining it. Fully reserved (available === 0) === Out of Stock.
+  const reservedPercent =
+    item.totalStock > 0 ? Math.round((item.reserved / item.totalStock) * 100) : 0
   const initial = item.name.charAt(0).toUpperCase()
   const errorMessage = errorCode
     ? (ERROR_MESSAGES[errorCode] ?? 'Something went wrong. Please try again.')
@@ -77,23 +56,25 @@ export function ItemCard({ item, onReserve, isReserving = false, errorCode }: It
         <div
           className="h-2 w-full overflow-hidden rounded-full bg-slate-200"
           role="progressbar"
-          aria-valuenow={item.available}
+          aria-valuenow={item.reserved}
           aria-valuemin={0}
           aria-valuemax={item.totalStock}
         >
           <div
-            className="h-full rounded-full bg-brand transition-[width] duration-500"
-            style={{ width: `${percent}%` }}
+            className={`h-full rounded-full transition-[width] duration-500 ${
+              outOfStock ? 'bg-red-500' : 'bg-brand'
+            }`}
+            style={{ width: `${reservedPercent}%` }}
           />
         </div>
         <div className="flex items-center justify-between text-sm">
           <span className="font-medium text-slate-600">
-            {item.available} / {item.totalStock} {outOfStock ? '' : 'Available'}
+            {item.reserved} / {item.totalStock} Reserved
           </span>
           {outOfStock ? (
             <span className="font-semibold text-red-600">Out of Stock</span>
           ) : (
-            <span className="font-semibold text-slate-500">{percent}%</span>
+            <span className="font-semibold text-slate-500">{item.available} Available</span>
           )}
         </div>
       </div>

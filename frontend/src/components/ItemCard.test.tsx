@@ -28,16 +28,16 @@ const baseItem: Item = {
 }
 
 describe('ItemCard', () => {
-  it('renders item name and the stock meter (available / total + percentage)', () => {
+  it('renders item name and the occupancy meter (reserved / total + available)', () => {
     render(<ItemCard item={baseItem} />)
 
     expect(screen.getByText('Vintage Camera')).toBeInTheDocument()
-    // The redesigned card shows available/total together plus the available percentage,
-    // not "reserved" as a separate figure (matches the stock-meter design).
-    expect(screen.getByText('7 / 10 Available')).toBeInTheDocument()
-    expect(screen.getByText('70%')).toBeInTheDocument() // 7 of 10 available
+    // Occupancy meter: the bar tracks RESERVED out of total (it fills as items are
+    // reserved), and the available count is shown alongside it.
+    expect(screen.getByText('3 / 10 Reserved')).toBeInTheDocument()
+    expect(screen.getByText('7 Available')).toBeInTheDocument()
     const meter = screen.getByRole('progressbar')
-    expect(meter).toHaveAttribute('aria-valuenow', '7')
+    expect(meter).toHaveAttribute('aria-valuenow', '3') // 3 of 10 reserved
     expect(meter).toHaveAttribute('aria-valuemax', '10')
   })
 

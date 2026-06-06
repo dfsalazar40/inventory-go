@@ -17,34 +17,17 @@
  */
 
 import { useCallback, useState } from 'react'
-import { apiFetch, ApiRequestError } from '../api/client'
+import { apiFetch } from '../api/client'
 import type { Reservation } from '../hooks/useReservations'
 import type { Item } from '../hooks/useWebSocket'
 import { useCountdown } from '../hooks/useCountdown'
+import type { ToastData } from './Toast'
+import { errorToToast } from '../lib/errors'
 
-// ── Typed error → user-readable messages (US7, FR-013, SC-007) ───────────────
-
-function reservationErrorMessage(err: unknown): string {
-  if (err instanceof ApiRequestError) {
-    switch (err.body.error) {
-      case 'conflict':
-        return 'Item Taken — reserved by another user. Try another item.'
-      case 'insufficient_stock':
-        return 'Not enough stock available for your request.'
-      case 'not_pending':
-        return 'This reservation is no longer pending and cannot be confirmed.'
-      case 'not_found':
-        return 'Reservation not found. It may have expired or been released already.'
-      case 'validation_error':
-        return 'Invalid request. Please check your input and try again.'
-      case 'idempotency_key_conflict':
-        return 'A conflicting request was already made. Please refresh and try again.'
-      default:
-        return err.body.message || 'Something went wrong. Please try again.'
-    }
-  }
-  return 'Network error. Please check your connection and try again.'
-}
+// Confirm/Release failures surface through the shared top-center toast (passed
+// down as onError) via the centralized errorToToast mapper — so error feedback
+// looks identical to reserve errors and matches the design mock (no inline
+// boxes inside the reservation card).
 
 /** Short, human-friendly reference derived from the reservation UUID (e.g. RES-1A2B). */
 function shortRef(id: string): string {
@@ -87,7 +70,6 @@ interface ReservationLineProps {
   itemName: string
   onConfirm: (id: string) => Promise<void>
   onRelease: (id: string) => Promise<void>
-  actionError: string | null
   isActing: boolean
 }
 
@@ -96,7 +78,6 @@ function ReservationLine({
   itemName,
   onConfirm,
   onRelease,
-  actionError,
   isActing,
 }: ReservationLineProps) {
   const isPending = reservation.status === 'pending'
@@ -126,16 +107,6 @@ function ReservationLine({
       <span className="text-sm text-slate-600">
         {reservation.quantity} {reservation.quantity === 1 ? 'Unit' : 'Units'} Held
       </span>
-
-      {/* Per-line error */}
-      {actionError && (
-        <div
-          role="alert"
-          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
-        >
-          {actionError}
-        </div>
-      )}
 
       {/* Action buttons only while PENDING: Confirm above, Release below (two-phase
           model). Once CONFIRMED, the units are locked in — no Release button is
@@ -178,6 +149,8 @@ interface ReservationPanelProps {
   items: Item[]
   /** Called after any confirm/release so the parent can refresh. */
   onRefresh: () => void
+  /** Surfaces confirm/release errors through the shared top-center toast. */
+  onError: (toast: ToastData) => void
 }
 
 export function ReservationPanel({
@@ -186,11 +159,10 @@ export function ReservationPanel({
   panelError,
   items,
   onRefresh,
+  onError,
 }: ReservationPanelProps) {
   // Per-reservation in-flight tracking for double-submit guard.
   const [actingIds, setActingIds] = useState<Set<string>>(new Set())
-  // Per-reservation action errors.
-  const [lineErrors, setLineErrors] = useState<Record<string, string>>({})
 
   const setActing = (id: string, v: boolean) =>
     setActingIds((prev) => {
@@ -200,50 +172,48 @@ export function ReservationPanel({
       return next
     })
 
-  const setLineError = (id: string, msg: string | null) =>
-    setLineErrors((prev) => {
-      if (msg === null) {
-        const { [id]: _, ...rest } = prev
-        return rest
-      }
-      return { ...prev, [id]: msg }
-    })
+  const itemNameMap = Object.fromEntries(items.map((i) => [i.id, i.name]))
+
+  // Resolve the display name for the item behind a given reservation id.
+  const resolveItemName = useCallback(
+    (id: string) => {
+      const itemId = reservations.find((r) => r.id === id)?.itemId
+      return (itemId && itemNameMap[itemId]) || 'item'
+    },
+    [reservations, itemNameMap],
+  )
 
   const handleConfirm = useCallback(
     async (id: string) => {
       if (actingIds.has(id)) return // double-submit guard
       setActing(id, true)
-      setLineError(id, null)
       try {
         await apiFetch(`/reservations/${id}/confirm`, { method: 'POST' })
         onRefresh()
       } catch (err) {
-        setLineError(id, reservationErrorMessage(err))
+        onError(errorToToast(err, { itemName: resolveItemName(id) }))
       } finally {
         setActing(id, false)
       }
     },
-    [actingIds, onRefresh],
+    [actingIds, onRefresh, onError, resolveItemName],
   )
 
   const handleRelease = useCallback(
     async (id: string) => {
       if (actingIds.has(id)) return // double-submit guard
       setActing(id, true)
-      setLineError(id, null)
       try {
         await apiFetch(`/reservations/${id}`, { method: 'DELETE' })
         onRefresh()
       } catch (err) {
-        setLineError(id, reservationErrorMessage(err))
+        onError(errorToToast(err, { itemName: resolveItemName(id) }))
       } finally {
         setActing(id, false)
       }
     },
-    [actingIds, onRefresh],
+    [actingIds, onRefresh, onError, resolveItemName],
   )
-
-  const itemNameMap = Object.fromEntries(items.map((i) => [i.id, i.name]))
 
   return (
     <section aria-label="Your Reservations" className="flex flex-col gap-4">
@@ -273,7 +243,6 @@ export function ReservationPanel({
               itemName={itemNameMap[r.itemId] ?? r.itemId}
               onConfirm={handleConfirm}
               onRelease={handleRelease}
-              actionError={lineErrors[r.id] ?? null}
               isActing={actingIds.has(r.id)}
             />
           ))}

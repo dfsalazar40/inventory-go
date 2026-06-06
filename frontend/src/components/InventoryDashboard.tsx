@@ -17,43 +17,19 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useWebSocket, type Item, type StockEvent } from '../hooks/useWebSocket'
 import { useReservations } from '../hooks/useReservations'
-import { ItemCard, ERROR_MESSAGES, type ApiErrorCode } from './ItemCard'
+import { ItemCard } from './ItemCard'
 import { ReservationPanel } from './ReservationPanel'
-import { apiFetch, ApiRequestError } from '../api/client'
+import { Toast, type ToastData } from './Toast'
+import { apiFetch } from '../api/client'
+import { errorToToast } from '../lib/errors'
 import { generateIdempotencyKey } from '../lib/identity'
-
-/** Extract a typed ApiErrorCode from an unknown thrown error. */
-function toErrorCode(err: unknown): ApiErrorCode {
-  if (err instanceof ApiRequestError) {
-    const code = err.body.error
-    // Only forward codes that are part of our typed set.
-    const typed: ApiErrorCode[] = [
-      'conflict',
-      'insufficient_stock',
-      'validation_error',
-      'idempotency_key_conflict',
-      'idempotency_key_required',
-      'not_found',
-      'not_pending',
-      'internal_error',
-    ]
-    if (typed.includes(code as ApiErrorCode)) return code as ApiErrorCode
-    return 'internal_error'
-  }
-  return 'network_error'
-}
-
-interface Toast {
-  title: string
-  message: string
-}
 
 export function InventoryDashboard() {
   const [items, setItems] = useState<Item[]>([])
   // Per-item reserving state (double-submit guard).
   const [reservingId, setReservingId] = useState<string | null>(null)
-  // Transient global error notification.
-  const [toast, setToast] = useState<Toast | null>(null)
+  // Transient global error notification (top-center toast).
+  const [toast, setToast] = useState<ToastData | null>(null)
 
   const {
     reservations,
@@ -95,6 +71,10 @@ export function InventoryDashboard() {
     return () => clearTimeout(timer)
   }, [toast])
 
+  // Shared toast trigger — passed down so the reservation panel surfaces its
+  // confirm/release errors through the same top-center toast instead of inline.
+  const showToast = useCallback((next: ToastData) => setToast(next), [])
+
   // Reset button — restores the demo to its initial seeded state: clears all
   // reservations and resets the catalog on the backend (POST /reset), then
   // reconciles this client's inventory + reservations. Other connected clients
@@ -104,13 +84,13 @@ export function InventoryDashboard() {
       const fresh = await apiFetch<Item[]>('/reset', { method: 'POST' })
       setItems(fresh)
     } catch {
-      setToast({
+      showToast({
         title: 'Reset Failed',
         message: 'Could not reset the inventory. Please try again.',
       })
     }
     refreshReservations()
-  }, [refreshReservations])
+  }, [refreshReservations, showToast])
 
   const handleReserve = useCallback(
     async (item: Item) => {
@@ -125,38 +105,18 @@ export function InventoryDashboard() {
         })
         // Success — the reservation panel and stock refresh via the WebSocket event.
       } catch (err: unknown) {
-        const code = toErrorCode(err)
-        setToast({
-          title: code === 'conflict' ? 'Item Taken' : 'Reservation Failed',
-          message: ERROR_MESSAGES[code] ?? 'Something went wrong. Please try again.',
-        })
+        showToast(errorToToast(err, { itemName: item.name }))
       } finally {
         setReservingId(null)
       }
     },
-    [reservingId],
+    [reservingId, showToast],
   )
 
   return (
     <div className="min-h-full px-4 py-8">
       {/* Transient global toast (top-center) */}
-      {toast && (
-        <div
-          role="alert"
-          className="fixed top-6 left-1/2 z-50 flex max-w-md -translate-x-1/2 items-start gap-3 rounded-lg bg-red-500 px-5 py-3 text-white shadow-lg"
-        >
-          <span
-            aria-hidden="true"
-            className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/25 text-xs font-bold"
-          >
-            i
-          </span>
-          <div className="text-sm">
-            <p className="font-bold">{toast.title}</p>
-            <p className="text-white/90">{toast.message}</p>
-          </div>
-        </div>
-      )}
+      {toast && <Toast toast={toast} />}
 
       <div className="mx-auto max-w-6xl overflow-hidden rounded-2xl bg-white shadow-xl">
         {/* Header bar */}
@@ -211,6 +171,7 @@ export function InventoryDashboard() {
               panelError={reservationsError}
               items={items}
               onRefresh={refreshReservations}
+              onError={showToast}
             />
           </aside>
         </div>
