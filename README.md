@@ -29,7 +29,27 @@ Mouse — varied stock, one out-of-stock item) loads automatically.
 
 ## Run the tests
 
-### Backend
+### In containers (recommended — no local toolchain needed)
+
+The production images ship **no toolchain** (the backend image is a static binary on Alpine, the
+frontend is nginx), so tests run in dedicated ephemeral runner containers against an **isolated**
+test database. One command:
+
+```bash
+./scripts/test.sh            # backend + frontend, with automatic teardown
+./scripts/test.sh backend    # backend only
+./scripts/test.sh frontend   # frontend only
+```
+
+This uses `docker-compose.test.yml`, which spins up a throwaway Postgres (with
+`max_connections=200` so the 100-goroutine concurrency suites contend on the **row lock**, not the
+connection limit), runs the Go suite with `-race -p 1 -count=1`, and the frontend suite with Vitest.
+The test database is separate from the app stack on purpose — the backend integration tests open a
+large pgx pool and would otherwise exhaust Postgres while the live `backend` service is connected.
+
+### Locally
+
+#### Backend
 
 The backend integration tests use a real Postgres instance. They open a large connection pool per
 package, so packages **must** run serially (`-p 1`) to avoid pool exhaustion and port contention.
@@ -56,7 +76,7 @@ Key concurrency suites:
 | TTL | Pending expires and returns stock once; confirmed never expires |
 | Confirm/expire race | TTL sweep and confirm fire simultaneously → exactly one outcome wins |
 
-### Frontend
+#### Frontend
 
 ```bash
 cd frontend
@@ -156,9 +176,15 @@ and `ttl` are isolated concerns wired in `main.go`.
 ```
 api/            — REST client (auto-attaches X-User-Id and Idempotency-Key)
 hooks/          — useWebSocket, useReservations, useCountdown
-components/     — InventoryDashboard, ItemCard, ReservationPanel
-lib/            — userId (browser UUID, ~1-day TTL), idempotency key generator
+components/     — InventoryDashboard, ItemCard, ReservationPanel, Toast
+lib/            — userId (browser UUID, ~1-day TTL), idempotency key generator,
+                  errors (single source of truth: error → {title, message} toast)
 ```
+
+The stock meter on each card is an **occupancy** bar: it fills as units are reserved
+(`reserved / total`) rather than draining, and turns red at full (out of stock). All error
+feedback — reserve, confirm, and release — surfaces through one shared top-center `Toast`, mapped
+from typed API errors by `lib/errors.ts`.
 
 ### Two-phase reservation model
 
